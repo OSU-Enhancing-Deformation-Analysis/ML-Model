@@ -8,9 +8,9 @@
 
 # Define variables
 RUN_NAME="m5-combo"
-IMAGES_DIR="/nfs/stak/users/schmitia/hpc-share/full_images/gRaw/"
-EXAMPLES_DIR="/nfs/stak/users/schmitia/hpc-share/example_images/"
-PYTHON_ENV=/nfs/stak/users/schmitia/hpc-share/capstone_model_training/bin/activate
+IMAGES_DIR="~/hpc-share/full_images/gRaw/"
+EXAMPLES_DIR="~/hpc-share/example_images/"
+PYTHON_ENV=~/hpc-share/capstone_model_training/bin/activate
 
 # Updates the batch file before running
 BATCH_FILE="batch-m5-combo.py"
@@ -20,7 +20,18 @@ wget -O "$BATCH_FILE" "$GITHUB_URL"
 
 source "$PYTHON_ENV"
 
+if [[ -e ./images_dir || -L ./images_dir ]]; then
+    echo "Notice: './images_dir' already exists. Skipping symlink creation."
+else  
+    ln -s "$IMAGES_DIR" ./images_dir
+fi
+if [[ -e ./example_images_dir || -L ./example_images_dir ]]; then
+    echo "Notice: './example_images_dir' already exists. Skipping symlink creation."
+else  
+    ln -s "$EXAMPLES_DIR" ./example_images_dir
+fi
+
 echo "Setup complete!"
 
 python "$BATCH_FILE" --evaluation_frequency=0.5 --snapshot_frequency=1 --run_name="$RUN_NAME" \
---images_dir="$IMAGES_DIR" --example_images_dir="$EXAMPLES_DIR" --dir_contains_tiles=False
+--images_dir="./images_dir" --example_images_dir="./example_images_dir" --wandb_enabled=True
