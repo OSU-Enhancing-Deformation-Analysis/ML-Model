@@ -269,7 +269,7 @@ IMAGES_FILE_EXTENSION = args.images_file_extension
 EXAMPLE_IMAGES_FILE_EXTENSION = args.example_images_file_extension
 DIR_CONTAINS_TILES = args.dir_contains_tiles
 NUM_WORKERS = args.num_workers
-BATCH_SIZE = BATCH_SIZE * args.batch_size_multiplier
+BATCH_SIZE = int(BATCH_SIZE * args.batch_size_multiplier)
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
 
