@@ -412,7 +412,7 @@ print(
     f"\n= {NUM_TRAINING_TILES} training tiles\n= {NUM_VALIDATION_TILES} validation tiles\n"
 )
 
-EVALUATION_FREQUENCY = NUM_TRAINING_TILES / BATCH_SIZE * EVALUATION_FREQUENCY
+EVALUATION_FREQUENCY = int(NUM_TRAINING_TILES / BATCH_SIZE * EVALUATION_FREQUENCY)
 
 ## Read the Examples images and tile them
 example_pairs = defaultdict(dict)
@@ -1790,10 +1790,10 @@ if WANDB_ENABLED:
     api = wandb.Api()
     existing_run: Run = api.run(run.path)
     history: List[Dict[str, int]] = existing_run.history(
-        samples=1, pandas=False, keys=["batch"]
+        samples=1, pandas=False, keys=["snapshot_batch"]
     )
     if len(history) > 0:
-        starting_batch: int = history[0]["batch"]
+        starting_batch: int = history[0]["snapshot_batch"]
 
     run.alert(
         title=f"Start Training",
