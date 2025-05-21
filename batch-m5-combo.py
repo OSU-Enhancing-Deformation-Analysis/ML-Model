@@ -111,10 +111,6 @@ EXAMPLE_IMAGES_FILE_EXTENSION = ".png"
 
 TILE_SIZE = 256  # Pixels
 MAX_TILES = 1000000
-# Normalize
-# True: normalize the images between the min() and max()
-# False: normalize between 0 and 255
-NORMALIZE = False
 # Validation split
 # The validation split is the percentage of the dataset that is used for validation
 VALIDATION_SPLIT = 0.05
