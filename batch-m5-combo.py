@@ -53,7 +53,6 @@ from torch import nn, Tensor
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 import torch.nn.functional as F
-import wandb
 
 # %% MARK: Constants
 
@@ -95,7 +94,7 @@ RUN_NAME = "b5-unknown-combo-test"
 # This folder is recursively searched so make sure it
 # doesn't contain a symbolic link to itself
 # TODO: Change to "./tiles"
-IMAGES_DIR = "../../tiles/g79"
+IMAGES_DIR = "../tiles/g79/"
 IMAGES_FILE_EXTENSION = ".png"
 # True if the folder contains tiles, False if it contains full images
 DIR_CONTAINS_TILES = True
@@ -103,7 +102,7 @@ DIR_CONTAINS_TILES = True
 # These get evaluated using the model and logged durring training
 # The folder should contain images names "image_a.png", "image_b.png", "test_a.png", "test_b.png", etc.
 # Importantly the "_a" and "_b" are required and serve as the two inputs to the model
-EXAMPLE_IMAGES_DIR = "../../raw/g79test"
+EXAMPLE_IMAGES_DIR = "../raw/g79test/"
 EXAMPLE_IMAGES_FILE_EXTENSION = ".png"
 
 TILE_SIZE = 256  # Pixels
@@ -175,6 +174,11 @@ parser.add_argument(
 parser.add_argument(
     "--images_file_extension",
     default=IMAGES_FILE_EXTENSION,
+    help="The file extension of the images to use",
+)
+parser.add_argument(
+    "--example_images_file_extension",
+    default=EXAMPLE_IMAGES_FILE_EXTENSION,
     help="The file extension of the images to use",
 )
 parser.add_argument(
@@ -1677,6 +1681,7 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(
 )
 
 # %% MARK: Weights and Biases Setup
+import wandb
 
 wandb_config = {
     "gpu": GPU,
