@@ -36,4 +36,4 @@ echo "Setup complete!"
 python "$BATCH_FILE" --evaluation_frequency=0.5 --snapshot_frequency=1 --run_name="$RUN_NAME" \
 --images_dir="./images_dir" --images_file_extension=".tif" --dir_contains_full_images \
 --example_images_dir="./example_images_dir" --example_images_file_extension=".png" \
---num_workers=4 --batch_size_multiplier=1.9
+--num_workers=4 --batch_size_multiplier=1.9 --overlap_size=192

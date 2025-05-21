@@ -1921,7 +1921,7 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
 
                 log_examples = True
 
-            figs = _visualise_model(idx=0, examples=8, didx=20, dseed=1)
+            figs = _visualise_model(idx=0, examples=8, didx=20, dseed=1, save=False)
             figs = [wandb.Image(fig, caption=f"Example {id}") for id, fig in figs]
             log["images"]["validations"] = figs
 
