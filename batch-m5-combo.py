@@ -98,10 +98,10 @@ RUN_NAME = "b5-unknown-combo-test"
 # Relative path to the folder of images
 # This folder is recursively searched so make sure it
 # doesn't contain a symbolic link to itself
-IMAGES_DIR = "../tiles/g79/"
-IMAGES_FILE_EXTENSION = ".png"
+IMAGES_DIR = "../raw/g79/"
+IMAGES_FILE_EXTENSION = ".tif"
 # True if the folder contains tiles, False if it contains full images
-DIR_CONTAINS_TILES = True
+DIR_CONTAINS_TILES = False
 # Relative path to the folder of testing images
 # These get evaluated using the model and logged durring training
 # The folder should contain images names "image_a.png", "image_b.png", "test_a.png", "test_b.png", etc.
@@ -325,7 +325,7 @@ def create_tiles(image: np.ndarray) -> List[npt.NDArray[np.uint8]]:
                     ] = tile_data
                     tile_data = padded_data
 
-                tiles.append(tile_data.copy())
+                tiles.append(tile_data)
     else:
         for y in range(0, height - OVERLAP_SIZE, SHIFT_SIZE):
             for x in range(0, width - OVERLAP_SIZE, SHIFT_SIZE):
@@ -367,40 +367,98 @@ def create_tiles(image: np.ndarray) -> List[npt.NDArray[np.uint8]]:
                     ] = tile_data
                     tile_data = padded_data
 
-                tiles.append(tile_data.copy())
+                tiles.append(tile_data)
 
     return tiles
 
 
+def create_tile_references(image_idx: int) -> List[Tuple[int, int, int]]:
+    """Split image into overlapping tiles.
+
+    Args:
+        image_idx (int): The index of the image to split into tiles.
+
+    Returns:
+        List[Tuple[int, int, int]]: A list of Tile references, each containing the image index, x, and y position of a tile in the image.
+
+    """
+    image_path = IMAGE_PATHS[image_idx]
+    image = Image.open(image_path)
+    width, height = image.size
+    tiles = []
+
+    if INCLUDE_OUTSIDE:
+        for y in range(-TILE_SIZE // 2, height - TILE_SIZE // 2, SHIFT_SIZE):
+            for x in range(-TILE_SIZE // 2, width - TILE_SIZE // 2, SHIFT_SIZE):
+                tiles.append((image_idx, x, y))
+    else:
+        for y in range(0, height - OVERLAP_SIZE, SHIFT_SIZE):
+            for x in range(0, width - OVERLAP_SIZE, SHIFT_SIZE):
+                if y + TILE_SIZE > height:
+                    y = height - TILE_SIZE
+                elif x + TILE_SIZE > width:
+                    x = width - TILE_SIZE
+
+                tiles.append((image_idx, x, y))
+
+    return tiles
+
+
+def get_tile_from_reference(reference: Tuple[int, int, int]) -> np.ndarray:
+    """Get a tile from a reference (image index, x, y).
+
+    Args:
+        reference (Tuple[int, int, int]): The reference to the tile (image index, x, y).
+
+    Returns:
+        np.ndarray: The tile at the reference.
+    """
+    image_idx, x, y = reference
+    img_path = IMAGE_PATHS[image_idx]
+    image = Image.open(img_path).convert("L")  # Convert to grayscale values (0-255)
+    height, width = image.size
+    image = np.array(image)
+
+    y_start = max(y, 0)
+    x_start = max(x, 0)
+    y_end = min(y + TILE_SIZE, height)
+    x_end = min(x + TILE_SIZE, width)
+
+    shift_x = x_start - x
+    shift_y = y_start - y
+
+    tile_data = image[y_start:y_end, x_start:x_end]
+
+    tile_data = np.pad(
+        tile_data,
+        (
+            (shift_y, TILE_SIZE - tile_data.shape[0] - shift_y),
+            (shift_x, TILE_SIZE - tile_data.shape[1] - shift_x),
+        ),
+        mode="constant",
+        constant_values=0,
+    )
+
+    return tile_data.astype(np.float32, copy=False) / 255
+
+
+TILES: List[Tuple[int, int, int]]
+
 if DIR_CONTAINS_TILES:
     # Loading tiles into memory
-    TILES = [np.array(Image.open(path)) for path in IMAGE_PATHS]
+    TILES = [(idx, 0, 0) for idx in range(len(IMAGE_PATHS))]
 else:
     # Cut the images into tiles
     print("- Cutting images into tiles")
     TILES = []
-    for image in IMAGE_PATHS:
-        TILES.extend(create_tiles(np.array(Image.open(image))))
+    for idx in range(len(IMAGE_PATHS)):
+        TILES.extend(create_tile_references(idx))
 
-TILES = np.array(TILES).astype(np.float32)
-
-if NORMALIZE:
-    print("- Normalizing images")
-    # Normalize the images from min() and max() to 0 and 1
-    min = TILES.min()
-    max = TILES.max()
-
-    TILES = (TILES - min) / (max - min)
-else:
-    # Normalize the images from 0 to 255
-    TILES = TILES / 255
 
 print(f"- Totaling {len(TILES)} tiles")
 NUM_TILES = min(MAX_TILES, len(TILES))
 print(f"- Limiting to {NUM_TILES} tiles")
 TILES = TILES[:NUM_TILES]
-
-print(TILES.shape)
 
 if NUM_TILES == 0:
     print("No tiles found. Exiting.")
@@ -411,6 +469,7 @@ NUM_VALIDATION_TILES = int(NUM_TILES * VALIDATION_SPLIT)
 print(
     f"\n= {NUM_TRAINING_TILES} training tiles\n= {NUM_VALIDATION_TILES} validation tiles\n"
 )
+
 
 EVALUATION_FREQUENCY = int(NUM_TRAINING_TILES / BATCH_SIZE * EVALUATION_FREQUENCY)
 
@@ -1406,7 +1465,13 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
             # mask = mask
             final_field = field_a * mask + field_b * (1 - mask)
 
-        image = TILES[idx]
+        tile_reference = TILES[idx]
+        image = get_tile_from_reference(tile_reference)
+
+        # Make the final_field 0 where image is 0
+        # final_field is (2, TILE_SIZE, TILE_SIZE)
+        # image is (TILE_SIZE, TILE_SIZE)
+        final_field[:, image == 0] = 0
 
         # Randomly transform the image
         # Rotate 0, 90, 180, 270
