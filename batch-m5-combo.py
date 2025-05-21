@@ -126,19 +126,77 @@ INCLUDE_OUTSIDE = False
 # %% MARK: Load CLI Options
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--run_name", default=RUN_NAME)
-parser.add_argument("--wandb_enabled", default=WANDB_ENABLED, type=bool)
-parser.add_argument("--evaluation_frequency", default=EVALUATION_FREQUENCY, type=int)
-parser.add_argument("--snapshot_frequency", default=SNAPSHOT_FREQUENCY, type=int)
-parser.add_argument("--validation_split", default=VALIDATION_SPLIT, type=float)
-parser.add_argument("--max_tiles", default=MAX_TILES, type=int)
-parser.add_argument("--images_dir", default=IMAGES_DIR)
-parser.add_argument("--example_images_dir", default=EXAMPLE_IMAGES_DIR)
-parser.add_argument("--images_file_extension", default=IMAGES_FILE_EXTENSION)
-parser.add_argument("--tile_size", default=TILE_SIZE, type=int)
-parser.add_argument("--dir_contains_tiles", default=DIR_CONTAINS_TILES, type=bool)
-parser.add_argument("--overlap_size", default=OVERLAP_SIZE, type=int)
-parser.add_argument("--include_outside", default=INCLUDE_OUTSIDE, type=bool)
+parser.add_argument(
+    "--run_name",
+    default=RUN_NAME,
+    help="Name of the run used for Weights and Biases and file names",
+)
+parser.add_argument(
+    "--wandb_enabled",
+    default=WANDB_ENABLED,
+    type=bool,
+    help="Enable Weights and Biases logging",
+)
+parser.add_argument(
+    "--evaluation_frequency",
+    default=EVALUATION_FREQUENCY,
+    type=float,
+    help="How often to evaluate the model as a percentage of the training set",
+)
+parser.add_argument(
+    "--snapshot_frequency",
+    default=SNAPSHOT_FREQUENCY,
+    type=float,
+    help="How often to save a snapshot of the model measured in hours",
+)
+parser.add_argument(
+    "--validation_split",
+    default=VALIDATION_SPLIT,
+    type=float,
+    help="The percentage of the dataset to use for validation",
+)
+parser.add_argument(
+    "--max_tiles",
+    default=MAX_TILES,
+    type=int,
+    help="The maximum number of tiles to generate",
+)
+parser.add_argument(
+    "--images_dir",
+    default=IMAGES_DIR,
+    help="The directory containing the images to use for training",
+)
+parser.add_argument(
+    "--example_images_dir",
+    default=EXAMPLE_IMAGES_DIR,
+    help="The directory containing the images to use for example generation",
+)
+parser.add_argument(
+    "--images_file_extension",
+    default=IMAGES_FILE_EXTENSION,
+    help="The file extension of the images to use",
+)
+parser.add_argument(
+    "--tile_size", default=TILE_SIZE, type=int, help="The size of the tiles to use"
+)
+parser.add_argument(
+    "--dir_contains_tiles",
+    default=DIR_CONTAINS_TILES,
+    type=bool,
+    help="Whether the images directory contains tiles or full images",
+)
+parser.add_argument(
+    "--overlap_size",
+    default=OVERLAP_SIZE,
+    type=int,
+    help="The size of the overlap between tiles",
+)
+parser.add_argument(
+    "--include_outside",
+    default=INCLUDE_OUTSIDE,
+    type=bool,
+    help="Whether to include the outside of the image in the tiles",
+)
 args, _unknown_args = parser.parse_known_args()
 
 RUN_NAME = args.run_name
