@@ -136,6 +136,12 @@ parser.add_argument(
     help="Name of the run used for Weights and Biases and file names",
 )
 parser.add_argument(
+    "--batch_size_multiplier",
+    default=1,
+    type=float,
+    help="Multiply the batch size by this number",
+)
+parser.add_argument(
     "--evaluation_frequency",
     default=EVALUATION_FREQUENCY,
     type=float,
@@ -263,6 +269,7 @@ IMAGES_FILE_EXTENSION = args.images_file_extension
 EXAMPLE_IMAGES_FILE_EXTENSION = args.example_images_file_extension
 DIR_CONTAINS_TILES = args.dir_contains_tiles
 NUM_WORKERS = args.num_workers
+BATCH_SIZE = BATCH_SIZE * args.batch_size_multiplier
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
 
@@ -1915,6 +1922,7 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
                 )
                 model_artifact.add_file(SNAPSHOT_FILE)
                 run.log_artifact(model_artifact)
+                log["snapshot_batch"] = batch
 
                 log_examples = True
 
