@@ -118,7 +118,7 @@ VALIDATION_SPLIT = 0.05
 # -- Tiling options for images not yet tiled --
 # Size of the overlap between tiles
 # A larger number means more tiles
-OVERLAP_SIZE = 32  # Pixels
+OVERLAP_SIZE = 64  # Pixels
 # Will produce tiles with black regions outside the original image
 # The CENTER_SIZE will always have image content
 INCLUDE_OUTSIDE = False
@@ -132,7 +132,13 @@ parser.add_argument("--evaluation_frequency", default=EVALUATION_FREQUENCY, type
 parser.add_argument("--snapshot_frequency", default=SNAPSHOT_FREQUENCY, type=int)
 parser.add_argument("--validation_split", default=VALIDATION_SPLIT, type=float)
 parser.add_argument("--max_tiles", default=MAX_TILES, type=int)
-parser.add_argument
+parser.add_argument("--images_dir", default=IMAGES_DIR)
+parser.add_argument("--example_images_dir", default=EXAMPLE_IMAGES_DIR)
+parser.add_argument("--images_file_extension", default=IMAGES_FILE_EXTENSION)
+parser.add_argument("--tile_size", default=TILE_SIZE, type=int)
+parser.add_argument("--dir_contains_tiles", default=DIR_CONTAINS_TILES, type=bool)
+parser.add_argument("--overlap_size", default=OVERLAP_SIZE, type=int)
+parser.add_argument("--include_outside", default=INCLUDE_OUTSIDE, type=bool)
 args, _unknown_args = parser.parse_known_args()
 
 RUN_NAME = args.run_name
@@ -141,6 +147,13 @@ EVALUATION_FREQUENCY = args.evaluation_frequency
 SNAPSHOT_FREQUENCY = args.snapshot_frequency
 VALIDATION_SPLIT = args.validation_split
 MAX_TILES = args.max_tiles
+TILE_SIZE = args.tile_size
+OVERLAP_SIZE = args.overlap_size
+INCLUDE_OUTSIDE = args.include_outside
+IMAGES_DIR = args.images_dir
+EXAMPLE_IMAGES_DIR = args.example_images_dir
+IMAGES_FILE_EXTENSION = args.images_file_extension
+DIR_CONTAINS_TILES = args.dir_contains_tiles
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
 
