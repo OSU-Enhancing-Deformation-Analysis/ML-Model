@@ -8,9 +8,9 @@
 
 # Define variables
 RUN_NAME="m5-combo"
-IMAGES_DIR="~/hpc-share/full_images/gRaw/"
-EXAMPLES_DIR="~/hpc-share/example_images/"
-PYTHON_ENV=~/hpc-share/capstone_model_training/bin/activate
+IMAGES_DIR="/nfs/stak/users/schmitia/hpc-share/full_images/gRaw/"
+EXAMPLES_DIR="/nfs/stak/users/schmitia/hpc-share/example_images/"
+PYTHON_ENV=/nfs/stak/users/schmitia/hpc-share/capstone_model_training/bin/activate
 
 # Updates the batch file before running
 BATCH_FILE="batch-m5-combo.py"
