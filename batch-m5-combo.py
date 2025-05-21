@@ -1660,17 +1660,12 @@ print("\n\n")
 # %% MARK: Loss Function
 LOSS_FUNCTION = "EPE"
 
-border = 10
-valid = np.zeros((TILE_SIZE, TILE_SIZE), dtype=np.uint8)
-valid[border:-border, border:-border] = 1
-valid = torch.from_numpy(valid).to(device)
-
 
 def loss_function(flow_preds: Tensor, flow_gt: Tensor):
     """Loss function defined over sequence of flow predictions"""
 
     i_loss = (flow_preds - flow_gt).abs()
-    flow_loss = (valid * i_loss).mean()
+    flow_loss = (i_loss).mean()
 
     epe = torch.sum((flow_preds - flow_gt) ** 2, dim=1).sqrt()
     epe = epe.view(-1)
