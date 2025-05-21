@@ -94,7 +94,6 @@ RUN_NAME = "b5-unknown-combo-test"
 # Relative path to the folder of images
 # This folder is recursively searched so make sure it
 # doesn't contain a symbolic link to itself
-# TODO: Change to "./tiles"
 IMAGES_DIR = "../tiles/g79/"
 IMAGES_FILE_EXTENSION = ".png"
 # True if the folder contains tiles, False if it contains full images
@@ -210,6 +209,10 @@ parser.add_argument(
     help="The number of workers to use for the dataloader",
 )
 args, _unknown_args = parser.parse_known_args()
+
+print(" === Command Line Arguments ===\n")
+print(args)
+print("\n\n")
 
 RUN_NAME = args.run_name
 WANDB_ENABLED = args.wandb_enabled
@@ -356,6 +359,12 @@ NUM_TILES = min(MAX_TILES, len(TILES))
 print(f"- Limiting to {NUM_TILES} tiles")
 TILES = TILES[:NUM_TILES]
 
+print(TILES.shape)
+
+if NUM_TILES == 0:
+    print("No tiles found. Exiting.")
+    exit(1)
+
 NUM_TRAINING_TILES = int(NUM_TILES * (1 - VALIDATION_SPLIT))
 NUM_VALIDATION_TILES = int(NUM_TILES * VALIDATION_SPLIT)
 print(
@@ -367,7 +376,7 @@ EVALUATION_FREQUENCY = NUM_TRAINING_TILES / BATCH_SIZE * EVALUATION_FREQUENCY
 ## Read the Examples images and tile them
 example_pairs = defaultdict(dict)
 
-print("- Loading example images from {EXAMPLE_IMAGES_DIR}")
+print(f"- Loading example images from {EXAMPLE_IMAGES_DIR}")
 for filename in os.listdir(EXAMPLE_IMAGES_DIR):
     if filename.endswith(EXAMPLE_IMAGES_FILE_EXTENSION):
         parts = filename.rsplit("_", maxsplit=1)
@@ -1595,7 +1604,7 @@ validation_dataloader = DataLoader(
     validation_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=True
 )
 
-print(f" === Created DataLoaders ({SyntheticDataset.VERSION}) ===")
+print(f" === Created DataLoaders ({SyntheticDataset.VERSION}) ===\n\n")
 
 # %% MARK: Create Model
 
