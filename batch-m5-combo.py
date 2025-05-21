@@ -245,7 +245,7 @@ print(args)
 print("\n\n")
 
 RUN_NAME = args.run_name
-WANDB_ENABLED = args.wandb_enabled
+WANDB_ENABLED = args.wandb
 EVALUATION_FREQUENCY = args.evaluation_frequency
 SNAPSHOT_FREQUENCY = args.snapshot_frequency
 VALIDATION_SPLIT = args.validation_split
