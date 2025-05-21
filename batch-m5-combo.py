@@ -1766,8 +1766,8 @@ wandb_config = {
     "architecture": ComboMotionVectorConvolutionNetwork.__name__,
     "dataset": {
         "version": SyntheticDataset.VERSION,
-        "training_tiles": NUM_TILES * (1 - VALIDATION_SPLIT),
-        "validation_tiles": NUM_TILES * VALIDATION_SPLIT,
+        "training_tiles": NUM_TRAINING_TILES,
+        "validation_tiles": NUM_VALIDATION_TILES,
     },
     "loss_function": LOSS_FUNCTION,
     "optimizer": OPTIMIZER_OPTIONS,
