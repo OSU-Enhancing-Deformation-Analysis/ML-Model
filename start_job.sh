@@ -33,6 +33,6 @@ fi
 
 echo "Setup complete!"
 
-python "$BATCH_FILE" --evaluation_frequency=0.5 --snapshot_frequency=1 --run_name="$RUN_NAME" \
+python "$BATCH_FILE" --evaluation_frequency=0.5 --snapshot_frequency=1 --run_name="$RUN_NAME" --num_workers=4 \
 --images_dir="./images_dir" --images_file_extension=".tif" --dir_contains_tiles=False \
 --example_images_dir="./example_images_dir" --example_images_file_extension=".png"

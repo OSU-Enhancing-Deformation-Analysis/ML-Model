@@ -70,6 +70,7 @@ print(f"Using {GPU} GPU with {GPU_MEMORY} GB of memory")
 
 # ( GB - 0.5 (buffer)) / 0.65 = BATCH_SIZE
 BATCH_SIZE = int((GPU_MEMORY - 0.5) / 0.65)
+NUM_WORKERS = 0
 
 # Run save frequency for saving snapshots & checkpoints
 # This also controls how often the example images are saved
@@ -202,6 +203,12 @@ parser.add_argument(
     type=bool,
     help="Whether to include the outside of the image in the tiles",
 )
+parser.add_argument(
+    "--num_workers",
+    default=NUM_WORKERS,
+    type=int,
+    help="The number of workers to use for the dataloader",
+)
 args, _unknown_args = parser.parse_known_args()
 
 RUN_NAME = args.run_name
@@ -218,14 +225,17 @@ EXAMPLE_IMAGES_DIR = args.example_images_dir
 IMAGES_FILE_EXTENSION = args.images_file_extension
 EXAMPLE_IMAGES_FILE_EXTENSION = args.example_images_file_extension
 DIR_CONTAINS_TILES = args.dir_contains_tiles
+NUM_WORKERS = args.num_workers
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
 
 # %% MARK: Load Tiles
-
+print(" === Image Loading ===\n")
+print(f"- Loading images from {IMAGES_DIR}")
 IMAGE_PATHS = glob.glob(
     os.path.join(IMAGES_DIR, "**/*" + IMAGES_FILE_EXTENSION), recursive=True
 )
+print(f"- Found {len(IMAGE_PATHS)} images")
 
 # Prepare the images and load into memory
 SHIFT_SIZE = TILE_SIZE - OVERLAP_SIZE
@@ -323,6 +333,7 @@ if DIR_CONTAINS_TILES:
     TILES = [np.array(Image.open(path)) for path in IMAGE_PATHS]
 else:
     # Cut the images into tiles
+    print("- Cutting images into tiles")
     TILES = []
     for image in IMAGE_PATHS:
         TILES.extend(create_tiles(np.array(Image.open(image))))
@@ -330,6 +341,7 @@ else:
 TILES = np.array(TILES).astype(np.float32)
 
 if NORMALIZE:
+    print("- Normalizing images")
     # Normalize the images from min() and max() to 0 and 1
     min = TILES.min()
     max = TILES.max()
@@ -339,14 +351,15 @@ else:
     # Normalize the images from 0 to 255
     TILES = TILES / 255
 
+print(f"- Totaling {len(TILES)} tiles")
 NUM_TILES = min(MAX_TILES, len(TILES))
-print(f"Found {len(IMAGE_PATHS)} images, limiting to {NUM_TILES}")
+print(f"- Limiting to {NUM_TILES} tiles")
 TILES = TILES[:NUM_TILES]
 
 NUM_TRAINING_TILES = int(NUM_TILES * (1 - VALIDATION_SPLIT))
 NUM_VALIDATION_TILES = int(NUM_TILES * VALIDATION_SPLIT)
 print(
-    f"Totaling {NUM_TRAINING_TILES} training tiles & {NUM_VALIDATION_TILES} validation tiles"
+    f"\n= {NUM_TRAINING_TILES} training tiles\n= {NUM_VALIDATION_TILES} validation tiles\n"
 )
 
 EVALUATION_FREQUENCY = NUM_TRAINING_TILES / BATCH_SIZE * EVALUATION_FREQUENCY
@@ -354,6 +367,7 @@ EVALUATION_FREQUENCY = NUM_TRAINING_TILES / BATCH_SIZE * EVALUATION_FREQUENCY
 ## Read the Examples images and tile them
 example_pairs = defaultdict(dict)
 
+print("- Loading example images from {EXAMPLE_IMAGES_DIR}")
 for filename in os.listdir(EXAMPLE_IMAGES_DIR):
     if filename.endswith(EXAMPLE_IMAGES_FILE_EXTENSION):
         parts = filename.rsplit("_", maxsplit=1)
@@ -381,6 +395,9 @@ EXAMPLE_TILES: List[Tuple[str, Tensor]] = [
     for key, pair in sorted(example_pairs.items())
     if "a" in pair and "b" in pair
 ]
+
+print(f"- Found {len(EXAMPLE_TILES)} example tile pairs")
+print("\n\n")
 
 # %% MARK: Vector Fields
 
@@ -624,6 +641,12 @@ class VectorFieldComposer:
 
         return warped_image.astype(np.float32)
 
+
+print(" === Vector Fields ===\n")
+print("- Vector Fields:")
+for field_type in VECTOR_FIELDS.keys():
+    print(f"  - {field_type}")
+print("\n")
 
 # %% MARK: Flow Visualizations
 
@@ -1164,6 +1187,12 @@ shape_functions: List[Callable[[int], farray]] = [
 ]
 
 
+print(" === Shape Functions ===\n")
+print("- Shape Functions:")
+for shape_function in shape_functions:
+    print(f"  - {shape_function.__name__}")
+print("\n")
+
 # %% MARK: Shape Visualizations
 
 
@@ -1553,8 +1582,6 @@ class ComboMotionVectorConvolutionNetwork(nn.Module):
 
 
 # %% MARK: Create Dataloader
-# TODO: change num workers
-NUM_WORKERS = 0
 training_dataset = SyntheticDataset()
 validation_dataset = SyntheticDataset(validation=True)
 
@@ -1568,13 +1595,17 @@ validation_dataloader = DataLoader(
     validation_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=True
 )
 
+print(f" === Created DataLoaders ({SyntheticDataset.VERSION}) ===")
+
 # %% MARK: Create Model
 
 model = ComboMotionVectorConvolutionNetwork().to(device)
 if os.path.exists(SNAPSHOT_FILE):
     model.load_state_dict(torch.load(SNAPSHOT_FILE, weights_only=True))
-print(model)
 
+print(f" === Created Model ({ComboMotionVectorConvolutionNetwork.__name__}) ===")
+print(model)
+print("\n\n")
 
 # %% MARK: Loss Function
 LOSS_FUNCTION = "EPE"
@@ -1737,7 +1768,15 @@ batch = starting_batch
 training_start_time = time.time()
 last_save_snapshot_time = time.time()
 
-print("Starting training...")
+print("\n\n")
+print("=== Starting Training ===")
+print("- Batch Size: ", BATCH_SIZE)
+print("- GPU Memory: ", GPU_MEMORY)
+print("- GPU: ", GPU)
+print("- Starting Batch: ", starting_batch)
+print("- Starting Training: ", training_start_time)
+print("- Last Save Snapshot: ", last_save_snapshot_time)
+print("\n\n")
 
 for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
     batch += 1
@@ -1773,6 +1812,7 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
 
     # Only evaluate every EVALUATION_FREQUENCY batches
     if batch % EVALUATION_FREQUENCY == 0:
+        print(f"[{time.time() - training_start_time:.2f}s | {batch}] Evaluating...")
         samples = 0
         validation_losses = 0.0
         epes = 0.0
@@ -1817,6 +1857,9 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
 
     # Only save every SNAPSHOT_FREQUENCY hours
     if time.time() - last_save_snapshot_time > SNAPSHOT_FREQUENCY * 60 * 60:
+        print(
+            f"[{time.time() - training_start_time:.2f}s | {batch}] Saving snapshot..."
+        )
         last_save_snapshot_time = time.time()
 
         with torch.no_grad():
