@@ -104,6 +104,7 @@ DIR_CONTAINS_TILES = True
 # The folder should contain images names "image_a.png", "image_b.png", "test_a.png", "test_b.png", etc.
 # Importantly the "_a" and "_b" are required and serve as the two inputs to the model
 EXAMPLE_IMAGES_DIR = "../../raw/g79test"
+EXAMPLE_IMAGES_FILE_EXTENSION = ".png"
 
 TILE_SIZE = 256  # Pixels
 MAX_TILES = 1000000
@@ -211,6 +212,7 @@ INCLUDE_OUTSIDE = args.include_outside
 IMAGES_DIR = args.images_dir
 EXAMPLE_IMAGES_DIR = args.example_images_dir
 IMAGES_FILE_EXTENSION = args.images_file_extension
+EXAMPLE_IMAGES_FILE_EXTENSION = args.example_images_file_extension
 DIR_CONTAINS_TILES = args.dir_contains_tiles
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
@@ -349,7 +351,7 @@ EVALUATION_FREQUENCY = NUM_TRAINING_TILES / BATCH_SIZE * EVALUATION_FREQUENCY
 example_pairs = defaultdict(dict)
 
 for filename in os.listdir(EXAMPLE_IMAGES_DIR):
-    if filename.endswith(IMAGES_FILE_EXTENSION):
+    if filename.endswith(EXAMPLE_IMAGES_FILE_EXTENSION):
         parts = filename.rsplit("_", maxsplit=1)
         pair_id = parts[0]
         suffix = parts[1].split(".")[0]  # 'a' or 'b'
