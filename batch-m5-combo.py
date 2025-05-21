@@ -132,12 +132,6 @@ parser.add_argument(
     help="Name of the run used for Weights and Biases and file names",
 )
 parser.add_argument(
-    "--wandb_enabled",
-    default=WANDB_ENABLED,
-    type=bool,
-    help="Enable Weights and Biases logging",
-)
-parser.add_argument(
     "--evaluation_frequency",
     default=EVALUATION_FREQUENCY,
     type=float,
@@ -185,22 +179,10 @@ parser.add_argument(
     "--tile_size", default=TILE_SIZE, type=int, help="The size of the tiles to use"
 )
 parser.add_argument(
-    "--dir_contains_tiles",
-    default=DIR_CONTAINS_TILES,
-    type=bool,
-    help="Whether the images directory contains tiles or full images",
-)
-parser.add_argument(
     "--overlap_size",
     default=OVERLAP_SIZE,
     type=int,
     help="The size of the overlap between tiles",
-)
-parser.add_argument(
-    "--include_outside",
-    default=INCLUDE_OUTSIDE,
-    type=bool,
-    help="Whether to include the outside of the image in the tiles",
 )
 parser.add_argument(
     "--num_workers",
@@ -208,6 +190,54 @@ parser.add_argument(
     type=int,
     help="The number of workers to use for the dataloader",
 )
+# Boolean handling
+
+wandb_arg_group = parser.add_mutually_exclusive_group()
+wandb_arg_group.add_argument(
+    "--wandb_enabled",
+    dest="wandb",
+    action="store_true",
+    help="Enable Weights and Biases logging",
+)
+wandb_arg_group.add_argument(
+    "--wandb_disabled",
+    dest="wandb",
+    action="store_false",
+    help="Disable Weights and Biases logging",
+)
+parser.set_defaults(wandb=WANDB_ENABLED)
+
+dircontainstiles_arg_group = parser.add_mutually_exclusive_group()
+dircontainstiles_arg_group.add_argument(
+    "--dir_contains_tiles",
+    dest="dir_contains_tiles",
+    action="store_true",
+    help="Specify that the images directory contains tiles",
+)
+dircontainstiles_arg_group.add_argument(
+    "--dir_contains_full_images",
+    dest="dir_contains_tiles",
+    action="store_false",
+    help="Specify that the images directory contains full images",
+)
+parser.set_defaults(dir_contains_tiles=DIR_CONTAINS_TILES)
+
+includeoutside_arg_group = parser.add_mutually_exclusive_group()
+includeoutside_arg_group.add_argument(
+    "--include_outside",
+    dest="include_outside",
+    action="store_true",
+    help="Whether to include the outside of the image in the tiles",
+)
+includeoutside_arg_group.add_argument(
+    "--exclude_outside",
+    dest="include_outside",
+    action="store_false",
+    help="Whether to exclude the outside of the image in the tiles",
+)
+parser.set_defaults(include_outside=INCLUDE_OUTSIDE)
+
+
 args, _unknown_args = parser.parse_known_args()
 
 print(" === Command Line Arguments ===\n")
