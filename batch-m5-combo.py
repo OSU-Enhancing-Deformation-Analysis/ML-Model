@@ -34,10 +34,14 @@ import numpy.typing as npt
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.figure import Figure
-import pyfastnoisesimd as fns
 import math
 from PIL import Image
 from collections import defaultdict
+
+# Monkey patch for pyfastnoisesimd
+if not hasattr(np, "product"):
+    np.product = np.prod  # type: ignore
+import pyfastnoisesimd as fns
 
 from dataclasses import dataclass
 from scipy.ndimage import map_coordinates, gaussian_filter
