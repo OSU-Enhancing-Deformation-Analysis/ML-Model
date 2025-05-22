@@ -2223,7 +2223,7 @@ optimizer = optim.AdamW(
 SCHEDULER_OPTIONS = {
     "type": "OneCycleLR",
     "max_learning_rate": OPTIMIZER_OPTIONS["learning_rate"],
-    "total_steps": 100_000,
+    "total_steps": 200_000,
     "pct_start": 0.05,
     "anneal_strategy": "linear",
     "cycle_momentum": False,
