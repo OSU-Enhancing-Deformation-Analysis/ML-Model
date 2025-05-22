@@ -75,7 +75,7 @@ GPU = torch.cuda.get_device_name(0)
 print(f"Using {GPU} GPU with {GPU_MEMORY} GB of memory")
 
 # ( GB - 0.5 (buffer)) / 0.65 = BATCH_SIZE
-BATCH_SIZE = int((GPU_MEMORY - 1.5) / 0.55) - 3
+BATCH_SIZE = int((GPU_MEMORY - 1.5) / 0.65)
 NUM_WORKERS = 0
 
 # Run save frequency for saving snapshots & checkpoints
