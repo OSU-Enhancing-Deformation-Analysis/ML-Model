@@ -2,6 +2,7 @@
 #
 # Important things to know about this notebook:
 #
+# - Model architecture is RAFT
 # - It contains code to tile images
 # - There are additional config options for validation and tiling
 # - Vector fields have been tuned to have little to no averaging bias
@@ -51,6 +52,7 @@ from skimage.draw import polygon
 from functools import wraps
 import flow_vis
 import argparse
+from argparse import Namespace
 
 import torch
 from torch import nn, Tensor
@@ -59,6 +61,8 @@ from torch.utils.data import Dataset, DataLoader, IterableDataset
 import torch.nn.functional as F
 
 # %% MARK: Constants
+a = False
+assert "This file is not ready for use yet" and a
 
 # Load the CUDA GPU if available
 device = (
@@ -73,7 +77,7 @@ GPU = torch.cuda.get_device_name(0)
 print(f"Using {GPU} GPU with {GPU_MEMORY} GB of memory")
 
 # ( GB - 0.5 (buffer)) / 0.65 = BATCH_SIZE
-BATCH_SIZE = int((GPU_MEMORY - 0.5) / 0.65)
+BATCH_SIZE = int((GPU_MEMORY - 1.5) / 0.55) - 3
 NUM_WORKERS = 0
 
 # Run save frequency for saving snapshots & checkpoints
@@ -99,7 +103,7 @@ RUN_NAME = "b5-unknown-combo-test"
 # Relative path to the folder of images
 # This folder is recursively searched so make sure it
 # doesn't contain a symbolic link to itself
-IMAGES_DIR = "../raw/g79/"
+IMAGES_DIR = "../../raw/g79/"
 IMAGES_FILE_EXTENSION = ".tif"
 # True if the folder contains tiles, False if it contains full images
 DIR_CONTAINS_TILES = False
@@ -107,11 +111,11 @@ DIR_CONTAINS_TILES = False
 # These get evaluated using the model and logged durring training
 # The folder should contain images names "image_a.png", "image_b.png", "test_a.png", "test_b.png", etc.
 # Importantly the "_a" and "_b" are required and serve as the two inputs to the model
-EXAMPLE_IMAGES_DIR = "../raw/g79test/"
+EXAMPLE_IMAGES_DIR = "../../raw/g79test/"
 EXAMPLE_IMAGES_FILE_EXTENSION = ".png"
 
 TILE_SIZE = 256  # Pixels
-MAX_TILES = 1000000
+MAX_TILES = 1000
 # Validation split
 # The validation split is the percentage of the dataset that is used for validation
 VALIDATION_SPLIT = 0.05
@@ -487,17 +491,17 @@ for filename in os.listdir(EXAMPLE_IMAGES_DIR):
 def _load_image_as_tensor(path: str) -> np.ndarray:
     path = os.path.join(EXAMPLE_IMAGES_DIR, path)
     image = Image.open(path)
-    return np.array(image).astype(np.float32) / 255
+    img = 2 * (np.array(image).astype(np.float32) / 255.0) - 1
+    return np.stack([img, img, img])
 
 
 # Convert to list of tuples, sorted by pair ID
-EXAMPLE_TILES: List[Tuple[str, Tensor]] = [
+EXAMPLE_TILES: List[Tuple[str, Tuple[Tensor, Tensor]]] = [
     (
         pair["a"],
-        torch.from_numpy(
-            np.array(
-                [_load_image_as_tensor(pair["a"]), _load_image_as_tensor(pair["b"])]
-            )
+        (
+            torch.from_numpy(_load_image_as_tensor(pair["a"])),
+            torch.from_numpy(_load_image_as_tensor(pair["b"])),
         ),
     )
     for key, pair in sorted(example_pairs.items())
@@ -1361,8 +1365,8 @@ def _visualise_all_shapes(save=True):
 # %% MARK: Dataset
 
 
-class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
-    VERSION = "v5"
+class SyntheticDataset(IterableDataset[Tuple[farray, farray, farray]]):
+    VERSION = "v5-raft"
 
     def __init__(self, validation=False):
         self.validation = validation
@@ -1462,12 +1466,12 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
 
             # Apply the mask to the fields
             # mask = mask
-            final_field = field_a * mask + field_b * (1 - mask)
+            final_field: farray = field_a * mask + field_b * (1 - mask)
 
         tile_reference = TILES[idx]
         image = get_tile_from_reference(tile_reference)
 
-        image = image / 255.0
+        image: farray = 2 * (image / 255.0) - 1.0
 
         # Randomly transform the image
         # Rotate 0, 90, 180, 270
@@ -1477,17 +1481,19 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
         if random.random() > 0.5:
             image = np.flip(image, random.randint(0, 1))
 
-        final_field[:, image == 0] = 0.0
+        final_field[:, image == -1.0] = 0.0
 
         # Adjust the minimum and maximum values
-        new_min = random.uniform(0.0, 0.2)
-        new_max = random.uniform(0.8, 1.0)
-        image = np.clip(image, new_min, new_max)
-        image = (image - new_min) / (new_max - new_min)
+        new_range = random.uniform(0.8, 1.0)
+        image = image * new_range
 
         warped_image = self.composer.apply_to_image(image, final_field * scale)
 
-        return np.array([image, warped_image]).astype(np.float32), final_field
+        # Make images (3, H, W)
+        image = np.array([image, image, image])
+        warped_image = np.array([warped_image, warped_image, warped_image])
+
+        return image, warped_image, final_field
 
 
 # %% MARK: Dataset Visualizations
@@ -1501,12 +1507,12 @@ def _visualise_dataset(save=True):
 
     # images, motion = dataset._generate(0, 0)
     for i in range(10):
-        images, motion = dataset._generate(0, 0, scale=(i + 1) / 5)
-        diff = np.abs(images[0] - images[1])
+        image1, image2, motion = dataset._generate(0, 0, scale=(i + 1) / 5)
+        diff = np.abs(image1 - image2)
 
         axes[i, 0].set_title(f"Scale: {(i + 1)/5:.2f}")
-        axes[i, 0].imshow(images[0])
-        axes[i, 1].imshow(images[1])
+        axes[i, 0].imshow(image1, vmin=-1, vmax=1)
+        axes[i, 1].imshow(image2, vmin=-1, vmax=1)
         axes[i, 2].imshow(flow_to_color(motion))
         axes[i, 3].imshow(diff)
 
@@ -1518,180 +1524,416 @@ def _visualise_dataset(save=True):
 # %% MARK: Model
 
 
-class ConvolutionBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
-        super().__init__()
+class ResidualBlock(nn.Module):
+    def __init__(self, in_planes, planes, norm_fn="group", stride=1):
+        super(ResidualBlock, self).__init__()
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=kernel_size,
-                stride=stride,
-                padding=padding,
-                bias=False,
-            ),
-            nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.1, inplace=True),
+        self.conv1 = nn.Conv2d(
+            in_planes, planes, kernel_size=3, padding=1, stride=stride
+        )
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, padding=1)
+        self.relu = nn.ReLU(inplace=True)
+
+        num_groups = planes // 8
+
+        if norm_fn == "group":
+            self.norm1 = nn.GroupNorm(num_groups=num_groups, num_channels=planes)
+            self.norm2 = nn.GroupNorm(num_groups=num_groups, num_channels=planes)
+            if not stride == 1:
+                self.norm3 = nn.GroupNorm(num_groups=num_groups, num_channels=planes)
+
+        elif norm_fn == "batch":
+            self.norm1 = nn.BatchNorm2d(planes)
+            self.norm2 = nn.BatchNorm2d(planes)
+            if not stride == 1:
+                self.norm3 = nn.BatchNorm2d(planes)
+
+        elif norm_fn == "instance":
+            self.norm1 = nn.InstanceNorm2d(planes)
+            self.norm2 = nn.InstanceNorm2d(planes)
+            if not stride == 1:
+                self.norm3 = nn.InstanceNorm2d(planes)
+
+        elif norm_fn == "none":
+            self.norm1 = nn.Sequential()
+            self.norm2 = nn.Sequential()
+            if not stride == 1:
+                self.norm3 = nn.Sequential()
+
+        if stride == 1:
+            self.downsample = None
+
+        else:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(in_planes, planes, kernel_size=1, stride=stride), self.norm3
+            )
+
+    def forward(self, x):
+        y = x
+        y = self.relu(self.norm1(self.conv1(y)))
+        y = self.relu(self.norm2(self.conv2(y)))
+
+        if self.downsample is not None:
+            x = self.downsample(x)
+
+        return self.relu(x + y)
+
+
+class BasicEncoder(nn.Module):
+    def __init__(self, output_dim=128, norm_fn="batch", dropout=0.0):
+        super(BasicEncoder, self).__init__()
+        self.norm_fn = norm_fn
+
+        if self.norm_fn == "group":
+            self.norm1 = nn.GroupNorm(num_groups=8, num_channels=64)
+
+        elif self.norm_fn == "batch":
+            self.norm1 = nn.BatchNorm2d(64)
+
+        elif self.norm_fn == "instance":
+            self.norm1 = nn.InstanceNorm2d(64)
+
+        elif self.norm_fn == "none":
+            self.norm1 = nn.Sequential()
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3)
+        self.relu1 = nn.ReLU(inplace=True)
+
+        self.in_planes = 64
+        self.layer1 = self._make_layer(64, stride=1)
+        self.layer2 = self._make_layer(96, stride=2)
+        self.layer3 = self._make_layer(128, stride=2)
+
+        # output convolution
+        self.conv2 = nn.Conv2d(128, output_dim, kernel_size=1)
+
+        self.dropout = None
+        if dropout > 0:
+            self.dropout = nn.Dropout2d(p=dropout)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d, nn.GroupNorm)):
+                if m.weight is not None:
+                    nn.init.constant_(m.weight, 1)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def _make_layer(self, dim, stride=1):
+        layer1 = ResidualBlock(self.in_planes, dim, self.norm_fn, stride=stride)
+        layer2 = ResidualBlock(dim, dim, self.norm_fn, stride=1)
+        layers = (layer1, layer2)
+
+        self.in_planes = dim
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+
+        # if input is list, combine batch dimension
+        is_list = isinstance(x, tuple) or isinstance(x, list)
+        batch_dim = 0  # Satisfy linter
+        if is_list:
+            batch_dim = x[0].shape[0]
+            x = torch.cat(x, dim=0)
+
+        x = self.conv1(x)
+        x = self.norm1(x)
+        x = self.relu1(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+
+        x = self.conv2(x)
+
+        if self.training and self.dropout is not None:
+            x = self.dropout(x)
+
+        if is_list:
+            x = torch.split(x, [batch_dim, batch_dim], dim=0)
+
+        return x
+
+
+class SepConvGRU(nn.Module):
+    def __init__(self, hidden_dim=128, input_dim=192 + 128):
+        super(SepConvGRU, self).__init__()
+        self.convz1 = nn.Conv2d(
+            hidden_dim + input_dim, hidden_dim, (1, 5), padding=(0, 2)
+        )
+        self.convr1 = nn.Conv2d(
+            hidden_dim + input_dim, hidden_dim, (1, 5), padding=(0, 2)
+        )
+        self.convq1 = nn.Conv2d(
+            hidden_dim + input_dim, hidden_dim, (1, 5), padding=(0, 2)
         )
 
-        self.residual = nn.Sequential()
-        if in_channels != out_channels:
-            self.residual = nn.Sequential(
-                nn.Conv2d(
-                    in_channels, out_channels, kernel_size=1, stride=stride, bias=False
-                ),
-                nn.BatchNorm2d(out_channels),
-            )
+        self.convz2 = nn.Conv2d(
+            hidden_dim + input_dim, hidden_dim, (5, 1), padding=(2, 0)
+        )
+        self.convr2 = nn.Conv2d(
+            hidden_dim + input_dim, hidden_dim, (5, 1), padding=(2, 0)
+        )
+        self.convq2 = nn.Conv2d(
+            hidden_dim + input_dim, hidden_dim, (5, 1), padding=(2, 0)
+        )
+
+    def forward(self, h, x):
+        # horizontal
+        hx = torch.cat([h, x], dim=1)
+        z = torch.sigmoid(self.convz1(hx))
+        r = torch.sigmoid(self.convr1(hx))
+        q = torch.tanh(self.convq1(torch.cat([r * h, x], dim=1)))
+        h = (1 - z) * h + z * q
+
+        # vertical
+        hx = torch.cat([h, x], dim=1)
+        z = torch.sigmoid(self.convz2(hx))
+        r = torch.sigmoid(self.convr2(hx))
+        q = torch.tanh(self.convq2(torch.cat([r * h, x], dim=1)))
+        h = (1 - z) * h + z * q
+
+        return h
+
+
+class FlowHead(nn.Module):
+    def __init__(self, input_dim=128, hidden_dim=256):
+        super(FlowHead, self).__init__()
+        self.conv1 = nn.Conv2d(input_dim, hidden_dim, 3, padding=1)
+        self.conv2 = nn.Conv2d(hidden_dim, 2, 3, padding=1)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        return self.conv(x) + self.residual(x)
+        return self.conv2(self.relu(self.conv1(x)))
 
 
-class SelfAttention(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.q_conv = nn.Conv2d(channels, channels // 8, kernel_size=1)
-        self.k_conv = nn.Conv2d(channels, channels // 8, kernel_size=1)
-        self.v_conv = nn.Conv2d(channels, channels, kernel_size=1)
-        self.o_conv = nn.Conv2d(channels, channels, kernel_size=1)
-        self.gamma = nn.Parameter(torch.zeros(1))  # Learnable scale parameter
+class BasicMotionEncoder(nn.Module):
+    def __init__(self, args):
+        super(BasicMotionEncoder, self).__init__()
+        cor_planes = args.corr_levels * (2 * args.corr_radius + 1) ** 2
+        self.convc1 = nn.Conv2d(cor_planes, 256, 1, padding=0)
+        self.convc2 = nn.Conv2d(256, 192, 3, padding=1)
+        self.convf1 = nn.Conv2d(2, 128, 7, padding=3)
+        self.convf2 = nn.Conv2d(128, 64, 3, padding=1)
+        self.conv = nn.Conv2d(64 + 192, 128 - 2, 3, padding=1)
 
-    def forward(self, x):
-        batch_size, channels, height, width = x.size()
+    def forward(self, flow, corr):
+        cor = F.relu(self.convc1(corr))
+        cor = F.relu(self.convc2(cor))
+        flo = F.relu(self.convf1(flow))
+        flo = F.relu(self.convf2(flo))
 
-        query = (
-            self.q_conv(x).view(batch_size, -1, width * height).permute(0, 2, 1)
-        )  # [B, N, C'] N=H*W, C'=C//8
-        key = self.k_conv(x).view(batch_size, -1, width * height)  # [B, C', N]
-        value = self.v_conv(x).view(batch_size, -1, width * height)  # [B, C, N]
-
-        attention = torch.bmm(query, key)  # [B, N, N]
-        attention = torch.softmax(attention, dim=-1)
-
-        attention_value = torch.bmm(value, attention)  # [B, C, N]
-        attention_value = attention_value.view(
-            batch_size, channels, height, width
-        )  # [B, C, H, W]
-
-        output = self.o_conv(attention_value)
-        return self.gamma * output + x  # Residual connection with learnable scale
+        cor_flo = torch.cat([cor, flo], dim=1)
+        out = F.relu(self.conv(cor_flo))
+        return torch.cat([out, flow], dim=1)
 
 
-class ComboMotionVectorConvolutionNetwork(nn.Module):
-    def __init__(self, input_images=2, base_channels=64, num_conv_blocks=3):
-        super().__init__()
-        self.input_images = input_images
-        self.vector_channels = 2
-        channels = base_channels
+class BasicUpdateBlock(nn.Module):
+    def __init__(self, args, hidden_dim=128, input_dim=128):
+        super(BasicUpdateBlock, self).__init__()
+        self.args = args
+        self.encoder = BasicMotionEncoder(args)
+        self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=128 + hidden_dim)
+        self.flow_head = FlowHead(hidden_dim, hidden_dim=256)
 
-        # Downsampling path (No changes needed)
-        self.conv1 = ConvolutionBlock(input_images, channels)
-        self.pool1 = nn.MaxPool2d(kernel_size=2)
-        self.conv2 = ConvolutionBlock(channels, channels * 2)
-        self.pool2 = nn.MaxPool2d(kernel_size=2)
+        self.mask = nn.Sequential(
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 64 * 9, 1, padding=0),
+        )
 
-        conv_blocks = []
-        current_channels = channels * 2
-        feature_channels = [channels, channels * 2]
-        down_feature_channel_sizes = []
-        for _ in range(num_conv_blocks):
-            channels *= 2
-            down_feature_channel_sizes.append(current_channels)
-            conv_blocks.extend(
-                [
-                    ConvolutionBlock(current_channels, channels, kernel_size=3),
-                    ConvolutionBlock(channels, channels, kernel_size=3),
-                    nn.MaxPool2d(kernel_size=2),
-                ]
-            )
-            current_channels = channels
-            feature_channels.append(channels)
-        self.conv_layers_down = nn.Sequential(*conv_blocks[:-1])
-        down_feature_channel_sizes.append(current_channels)
+    def forward(self, net, inp, corr, flow, upsample=True):
+        motion_features = self.encoder(flow, corr)
+        inp = torch.cat([inp, motion_features], dim=1)
 
-        # Bottleneck with Attention (No changes needed)
-        self.attention = SelfAttention(channels)
+        net = self.gru(net, inp)
+        delta_flow = self.flow_head(net)
 
-        # Upsampling path (Corrected in Attempt 4)
-        up_channels = channels  # up_channels = 512
-        self.upconv1 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # 512 -> 256
-        self.conv_up1 = ConvolutionBlock(
-            up_channels // 2 + down_feature_channel_sizes[-2], up_channels // 2
-        )  # Input: 512, Output: 256
+        # scale mask to balence gradients
+        mask = 0.25 * self.mask(net)
+        return net, mask, delta_flow
 
-        up_channels = 256  # Reset up_channels to output of conv_up1 = 256
-        self.upconv2 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # Revised: 256 -> 128
-        self.conv_up2 = ConvolutionBlock(
-            up_channels // 2 + down_feature_channel_sizes[-3], up_channels // 2
-        )  # Revised Input: 384, Output: 128
 
-        up_channels //= 2  # up_channels = 128
-        self.upconv3 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # Revised: 128 -> 64
-        self.conv_up3 = ConvolutionBlock(
-            up_channels // 2 + feature_channels[1], up_channels // 2
-        )  # Revised Input: 192, Output: 64
+def coords_grid(batch, ht, wd, device):
+    coords = torch.meshgrid(
+        torch.arange(ht, device=device), torch.arange(wd, device=device)
+    )
+    coords = torch.stack(coords[::-1], dim=0).float()
+    return coords[None].repeat(batch, 1, 1, 1)
 
-        up_channels //= 2  # up_channels = 64
-        self.upconv4 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # Revised: 64 -> 32
-        self.conv_up4 = ConvolutionBlock(
-            up_channels // 2 + feature_channels[0], up_channels // 2
-        )  # Revised Input: 96, Output: 32
 
-        up_channels //= 2  # up_channels = 32
-        self.output_conv = nn.Conv2d(
-            up_channels, self.vector_channels, kernel_size=3, stride=1, padding=1
-        )  # Revised: Input 32 -> Output 2
+def bilinear_sampler(img, coords, mode="bilinear"):
+    """Wrapper for grid_sample, uses pixel coordinates"""
+    H, W = img.shape[-2:]
+    xgrid, ygrid = coords.split([1, 1], dim=-1)
+    xgrid = 2 * xgrid / (W - 1) - 1
+    ygrid = 2 * ygrid / (H - 1) - 1
 
-    def forward(self, x):
-        # Downsampling
-        conv1 = self.conv1(x)
-        pool1 = self.pool1(conv1)
-        conv2 = self.conv2(pool1)
-        pool2 = self.pool2(conv2)
-        conv_down = pool2
-        intermediate_features = [conv1, conv2]
-        down_features_to_concat = []
+    grid = torch.cat([xgrid, ygrid], dim=-1)
+    img = F.grid_sample(img, grid, align_corners=True)
 
-        # Deeper Downsampling
-        for i, layer in enumerate(self.conv_layers_down):
-            conv_down = layer(conv_down)
-            if isinstance(layer, ConvolutionBlock) and (i + 1) % 3 == 1:
-                down_features_to_concat.append(conv_down)
+    return img
 
-        conv_bottleNeck = self.attention(conv_down)
 
-        # Upsampling
-        upconv1 = self.upconv1(conv_bottleNeck)
-        upconv1_concat = torch.cat(
-            [upconv1, down_features_to_concat[-2]], dim=1
-        )  # Corrected index
-        conv_up1 = self.conv_up1(upconv1_concat)
+def upflow8(flow, mode="bilinear"):
+    new_size = (8 * flow.shape[2], 8 * flow.shape[3])
+    return 8 * F.interpolate(flow, size=new_size, mode=mode, align_corners=True)
 
-        upconv2 = self.upconv2(conv_up1)
-        upconv2_concat = torch.cat(
-            [upconv2, down_features_to_concat[-3]], dim=1
-        )  # Corrected index
-        conv_up2 = self.conv_up2(upconv2_concat)
 
-        upconv3 = self.upconv3(conv_up2)
-        upconv3_concat = torch.cat([upconv3, intermediate_features[1]], dim=1)
-        conv_up3 = self.conv_up3(upconv3_concat)
+class CorrBlock:
+    def __init__(self, fmap1, fmap2, num_levels=4, radius=4):
+        self.num_levels = num_levels
+        self.radius = radius
+        self.corr_pyramid = []
 
-        upconv4 = self.upconv4(conv_up3)
-        upconv4_concat = torch.cat([upconv4, intermediate_features[0]], dim=1)
-        conv_up4 = self.conv_up4(upconv4_concat)
+        # all pairs correlation
+        corr = CorrBlock.corr(fmap1, fmap2)
 
-        output = self.output_conv(conv_up4)
-        return output
+        batch, h1, w1, dim, h2, w2 = corr.shape
+        corr = corr.reshape(batch * h1 * w1, dim, h2, w2)
+
+        self.corr_pyramid.append(corr)
+        for i in range(self.num_levels - 1):
+            corr = F.avg_pool2d(corr, 2, stride=2)
+            self.corr_pyramid.append(corr)
+
+    def __call__(self, coords):
+        r = self.radius
+        coords = coords.permute(0, 2, 3, 1)
+        batch, h1, w1, _ = coords.shape
+
+        out_pyramid = []
+        for i in range(self.num_levels):
+            corr = self.corr_pyramid[i]
+            dx = torch.linspace(-r, r, 2 * r + 1, device=coords.device)
+            dy = torch.linspace(-r, r, 2 * r + 1, device=coords.device)
+            delta = torch.stack(torch.meshgrid(dy, dx), dim=-1)
+
+            centroid_lvl = coords.reshape(batch * h1 * w1, 1, 1, 2) / 2**i
+            delta_lvl = delta.view(1, 2 * r + 1, 2 * r + 1, 2)
+            coords_lvl = centroid_lvl + delta_lvl
+
+            corr = bilinear_sampler(corr, coords_lvl)
+            corr = corr.view(batch, h1, w1, -1)
+            out_pyramid.append(corr)
+
+        out = torch.cat(out_pyramid, dim=-1)
+        return out.permute(0, 3, 1, 2).contiguous().float()
+
+    @staticmethod
+    def corr(fmap1, fmap2):
+        batch, dim, ht, wd = fmap1.shape
+        fmap1 = fmap1.view(batch, dim, ht * wd)
+        fmap2 = fmap2.view(batch, dim, ht * wd)
+
+        corr = torch.matmul(fmap1.transpose(1, 2), fmap2)
+        corr = corr.view(batch, ht, wd, 1, ht, wd)
+        return corr / torch.sqrt(torch.tensor(dim).float())
+
+
+class RAFT(nn.Module):
+    def __init__(self):
+        super(RAFT, self).__init__()
+        self.args = Namespace()
+
+        self.args.dropout = 0
+        self.args.small = False
+        self.args.mixed_precision = False
+        self.args.alternate_corr = False
+
+        self.hidden_dim = hdim = 128
+        self.context_dim = cdim = 128
+        self.args.corr_levels = 4
+        self.args.corr_radius = 4
+
+        # feature network, context network, and update block
+        self.fnet = BasicEncoder(
+            output_dim=256, norm_fn="instance", dropout=self.args.dropout
+        )
+        self.cnet = BasicEncoder(
+            output_dim=hdim + cdim, norm_fn="batch", dropout=self.args.dropout
+        )
+        self.update_block = BasicUpdateBlock(self.args, hidden_dim=hdim)
+
+    def freeze_bn(self):
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
+
+    def initialize_flow(self, img):
+        """Flow is represented as difference between two coordinate grids flow = coords1 - coords0"""
+        N, C, H, W = img.shape
+        coords0 = coords_grid(N, H // 8, W // 8, device=img.device)
+        coords1 = coords_grid(N, H // 8, W // 8, device=img.device)
+
+        # optical flow computed as difference: flow = coords1 - coords0
+        return coords0, coords1
+
+    def upsample_flow(self, flow, mask):
+        """Upsample flow field [H/8, W/8, 2] -> [H, W, 2] using convex combination"""
+        N, _, H, W = flow.shape
+        mask = mask.view(N, 1, 9, 8, 8, H, W)
+        mask = torch.softmax(mask, dim=2)
+
+        up_flow = F.unfold(8 * flow, (3, 3), padding=1)
+        up_flow = up_flow.view(N, 2, 9, 1, 1, H, W)
+
+        up_flow = torch.sum(mask * up_flow, dim=2)
+        up_flow = up_flow.permute(0, 1, 4, 2, 5, 3)
+        return up_flow.reshape(N, 2, 8 * H, 8 * W)
+
+    def forward(
+        self, image1, image2, iters=12, flow_init=None, upsample=True, test_mode=False
+    ):
+        """Estimate optical flow between pair of frames"""
+        # image1: Tensor[B, 3, H, W]
+        # image2: Tensor[B, 3, H, W]
+
+        image1 = image1.contiguous()
+        image2 = image2.contiguous()
+
+        hdim = self.hidden_dim
+        cdim = self.context_dim
+
+        # run the feature network
+        fmap1, fmap2 = self.fnet([image1, image2])
+
+        fmap1 = fmap1.float()
+        fmap2 = fmap2.float()
+        corr_fn = CorrBlock(fmap1, fmap2, radius=self.args.corr_radius)
+
+        # run the context network
+        cnet = self.cnet(image1)
+        net, inp = torch.split(cnet, [hdim, cdim], dim=1)
+        net = torch.tanh(net)
+        inp = torch.relu(inp)
+
+        coords0, coords1 = self.initialize_flow(image1)
+
+        if flow_init is not None:
+            coords1 = coords1 + flow_init
+
+        flow_predictions = []
+        for itr in range(iters):
+            coords1 = coords1.detach()
+            corr = corr_fn(coords1)  # index correlation volume
+
+            flow = coords1 - coords0
+            net, up_mask, delta_flow = self.update_block(net, inp, corr, flow)
+
+            # F(t+1) = F(t) + \Delta(t)
+            coords1 = coords1 + delta_flow
+
+            # upsample predictions
+            if up_mask is None:
+                flow_up = upflow8(coords1 - coords0)
+            else:
+                flow_up = self.upsample_flow(coords1 - coords0, up_mask)
+
+            flow_predictions.append(flow_up)
+
+        return flow_predictions  # List[Tensor[B, 2, H, W]]
 
 
 # %% MARK: Create Dataloader
@@ -1712,25 +1954,38 @@ print(f" === Created DataLoaders ({SyntheticDataset.VERSION}) ===\n\n")
 
 # %% MARK: Create Model
 
-model = ComboMotionVectorConvolutionNetwork().to(device)
+model = RAFT().to(device)
 if os.path.exists(SNAPSHOT_FILE):
     model.load_state_dict(torch.load(SNAPSHOT_FILE, weights_only=True))
 
-print(f" === Created Model ({ComboMotionVectorConvolutionNetwork.__name__}) ===")
+RAFT_PARAMS = {
+    "corr_levels": 4,
+    "corr_radius": 4,
+    "hidden_dim": 128,
+    "context_dim": 128,
+}
+
+print(f" === Created Model ({RAFT.__name__}) ===")
 print(model)
 print("\n\n")
 
 # %% MARK: Loss Function
-LOSS_FUNCTION = "EPE"
+LOSS_FUNCTION = "Sequence-EPE"
+MAX_FLOW = 400
 
 
-def loss_function(flow_preds: Tensor, flow_gt: Tensor):
+def loss_function(flow_preds: Tensor, flow_gt: Tensor, gamma=0.8, max_flow=MAX_FLOW):
     """Loss function defined over sequence of flow predictions"""
 
-    i_loss = (flow_preds - flow_gt).abs()
-    flow_loss = (i_loss).mean()
+    n_predictions = len(flow_preds)
+    flow_loss = torch.tensor(0.0).to(flow_gt.device)
 
-    epe = torch.sum((flow_preds - flow_gt) ** 2, dim=1).sqrt()
+    for i in range(n_predictions):
+        i_weight = gamma ** (n_predictions - i - 1)
+        i_loss = (flow_preds[i] - flow_gt).abs()
+        flow_loss += i_weight * (i_loss).mean()
+
+    epe = torch.sum((flow_preds[-1] - flow_gt) ** 2, dim=1).sqrt()
     epe = epe.view(-1)
 
     metrics = {
@@ -1757,25 +2012,30 @@ def _visualise_model(
         for ax in axes.flatten():
             ax.axis("off")
 
-        images, motion = validation_dataset._generate(
+        image1, image2, motion = validation_dataset._generate(
             idx + (didx * i), seed + (dseed * i)
         )
 
-        batch_images = torch.from_numpy(np.array([images])).float().to(device)
-        batch_vectors = torch.from_numpy(np.array([motion])).float().to(device)
+        batch_image1 = torch.from_numpy(image1).unsqueeze(0).to(device)
+        batch_image2 = torch.from_numpy(image2).unsqueeze(0).to(device)
+        batch_vectors = torch.from_numpy(motion).unsqueeze(0).to(device)
+
+        print(image1.shape)
+        print(image1.max())
+        print(image1.min())
 
         model.eval()
         with torch.no_grad():
-            prediction = model(batch_images)
+            prediction = model(batch_image1, batch_image2)
 
         loss, metrics = loss_function(prediction, batch_vectors)
 
-        predicted_vectors = prediction.squeeze(0).cpu().numpy()
+        predicted_vectors = prediction[-1].squeeze(0).cpu().numpy()
 
         axes[0].set_title(f"Original Val idx: {idx}")
-        axes[0].imshow(images[0])
+        axes[0].imshow(image1[0], vmin=-1, vmax=1)
         axes[1].set_title("Morphed")
-        axes[1].imshow(images[1])
+        axes[1].imshow(image2[0], vmin=-1, vmax=1)
         axes[2].set_title(f"Vector Field seed: {seed}")
         axes[2].imshow(flow_to_color(motion))
         axes[3].set_title("Prediction")
@@ -1800,10 +2060,17 @@ def _visualise_model(
 
 OPTIMIZER_OPTIONS = {
     "type": "AdamW",
-    "learning_rate": 0.001,
+    "learning_rate": 0.0004,
+    "weight_decay": 0.0001,
+    "epsilon": 1e-08,
 }
 
-optimizer = optim.AdamW(model.parameters(), lr=OPTIMIZER_OPTIONS["learning_rate"])
+optimizer = optim.AdamW(
+    model.parameters(),
+    lr=OPTIMIZER_OPTIONS["learning_rate"],
+    weight_decay=OPTIMIZER_OPTIONS["weight_decay"],
+    eps=OPTIMIZER_OPTIONS["epsilon"],
+)
 
 SCHEDULER_OPTIONS = {
     "type": "ReduceLROnPlateau",
@@ -1826,7 +2093,8 @@ wandb_config = {
     "gpu": GPU,
     "gpu_memory": GPU_MEMORY,
     "batch_size": BATCH_SIZE,
-    "architecture": ComboMotionVectorConvolutionNetwork.__name__,
+    "architecture": RAFT.__name__,
+    "model_params": RAFT_PARAMS,
     "dataset": {
         "version": SyntheticDataset.VERSION,
         "training_tiles": NUM_TRAINING_TILES,
@@ -1836,6 +2104,10 @@ wandb_config = {
     "optimizer": OPTIMIZER_OPTIONS,
     "scheduler": SCHEDULER_OPTIONS,
 }
+
+print(" === Run Config ===\n")
+print(wandb_config)
+print("\n")
 
 starting_batch = 0
 run = None
@@ -1884,16 +2156,22 @@ print("- GPU: ", GPU)
 print("- Starting Batch: ", starting_batch)
 print("- Starting Training: ", training_start_time)
 print("- Last Save Snapshot: ", last_save_snapshot_time)
+print("- Evaluation Frequency: ", EVALUATION_FREQUENCY)
+print("- Snapshot Frequency: ", SNAPSHOT_FREQUENCY)
 print("\n\n")
 
-for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
+for idx, (batch_image1, batch_image2, batch_vectors) in enumerate(training_dataloader):
     batch += 1
 
     model.train()
 
-    batch_images, batch_vectors = batch_images.to(device), batch_vectors.to(device)
+    batch_image1, batch_image2, batch_vectors = (
+        batch_image1.to(device),
+        batch_image2.to(device),
+        batch_vectors.to(device),
+    )
 
-    pred = model(batch_images)
+    pred = model(batch_image1, batch_image2)
     loss, metrics = loss_function(pred, batch_vectors)
     loss.backward()
 
@@ -1930,11 +2208,12 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
 
         with torch.no_grad():
 
-            for batch_images, batch_vectors in validation_dataloader:
-                batch_images = batch_images.to(device)
+            for batch_image1, batch_image2, batch_vectors in validation_dataloader:
+                batch_image1 = batch_image1.to(device)
+                batch_image2 = batch_image2.to(device)
                 batch_vectors = batch_vectors.to(device)
 
-                pred = model(batch_images)
+                pred = model(batch_image1, batch_image2)
                 loss, metrics = loss_function(pred, batch_vectors)
 
                 samples += 1
@@ -1988,10 +2267,12 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
         with torch.no_grad():
             samples = []
             for example_id, example in enumerate(EXAMPLE_TILES):
-                example_path, example = example
-                batch_example = example.unsqueeze(0).to(device)
+                example_path, example_images = example
+                image1, image2 = example_images
+                batch_image1 = image1.unsqueeze(0).to(device)
+                batch_image2 = image2.unsqueeze(0).to(device)
 
-                example_pred = model(batch_example)
+                example_pred = model(batch_image1, batch_image2)
                 loss, metrics = loss_function(example_pred, batch_vectors)
 
                 fig, axes = plt.subplots(1, 3, figsize=(12, 5))
@@ -1999,14 +2280,14 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
                 for ax in axes.flatten():
                     ax.axis("off")
 
-                predicted_vectors = example_pred.squeeze(0).cpu().numpy()
+                predicted_vectors = example_pred[-1].squeeze(0).cpu().numpy()
 
                 fig.suptitle(f"Batch {batch}")
 
                 axes[0].set_title(f"Original Val idx: {idx}")
-                axes[0].imshow(example[0].cpu().numpy())
+                axes[0].imshow(image1[0], vmin=-1, vmax=1)
                 axes[1].set_title("Morphed")
-                axes[1].imshow(example[1].cpu().numpy())
+                axes[1].imshow(image2[0], vmin=-1, vmax=1)
                 axes[2].set_title("Prediction")
                 axes[2].imshow(flow_to_color(predicted_vectors))
 

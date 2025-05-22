@@ -2,6 +2,7 @@
 #
 # Important things to know about this notebook:
 #
+# - Model architecture is RAFT
 # - It contains code to tile images
 # - There are additional config options for validation and tiling
 # - Vector fields have been tuned to have little to no averaging bias
@@ -51,6 +52,7 @@ from skimage.draw import polygon
 from functools import wraps
 import flow_vis
 import argparse
+from argparse import Namespace
 
 import torch
 from torch import nn, Tensor
@@ -73,7 +75,7 @@ GPU = torch.cuda.get_device_name(0)
 print(f"Using {GPU} GPU with {GPU_MEMORY} GB of memory")
 
 # ( GB - 0.5 (buffer)) / 0.65 = BATCH_SIZE
-BATCH_SIZE = int((GPU_MEMORY - 0.5) / 0.65)
+BATCH_SIZE = int((GPU_MEMORY - 1.5) / 0.55) - 3
 NUM_WORKERS = 0
 
 # Run save frequency for saving snapshots & checkpoints
@@ -99,7 +101,7 @@ RUN_NAME = "b5-unknown-combo-test"
 # Relative path to the folder of images
 # This folder is recursively searched so make sure it
 # doesn't contain a symbolic link to itself
-IMAGES_DIR = "../raw/g79/"
+IMAGES_DIR = "../../raw/g79/"
 IMAGES_FILE_EXTENSION = ".tif"
 # True if the folder contains tiles, False if it contains full images
 DIR_CONTAINS_TILES = False
@@ -107,11 +109,11 @@ DIR_CONTAINS_TILES = False
 # These get evaluated using the model and logged durring training
 # The folder should contain images names "image_a.png", "image_b.png", "test_a.png", "test_b.png", etc.
 # Importantly the "_a" and "_b" are required and serve as the two inputs to the model
-EXAMPLE_IMAGES_DIR = "../raw/g79test/"
+EXAMPLE_IMAGES_DIR = "../../raw/g79test/"
 EXAMPLE_IMAGES_FILE_EXTENSION = ".png"
 
 TILE_SIZE = 256  # Pixels
-MAX_TILES = 1000000
+MAX_TILES = 1000
 # Validation split
 # The validation split is the percentage of the dataset that is used for validation
 VALIDATION_SPLIT = 0.05
@@ -245,28 +247,28 @@ includeoutside_arg_group.add_argument(
 parser.set_defaults(include_outside=INCLUDE_OUTSIDE)
 
 
-args, _unknown_args = parser.parse_known_args()
+cli_args, _unknown_args = parser.parse_known_args()
 
 print(" === Command Line Arguments ===\n")
-print(args)
+print(cli_args)
 print("\n\n")
 
-RUN_NAME = args.run_name
-WANDB_ENABLED = args.wandb
-EVALUATION_FREQUENCY = args.evaluation_frequency
-SNAPSHOT_FREQUENCY = args.snapshot_frequency
-VALIDATION_SPLIT = args.validation_split
-MAX_TILES = args.max_tiles
-TILE_SIZE = args.tile_size
-OVERLAP_SIZE = args.overlap_size
-INCLUDE_OUTSIDE = args.include_outside
-IMAGES_DIR = args.images_dir
-EXAMPLE_IMAGES_DIR = args.example_images_dir
-IMAGES_FILE_EXTENSION = args.images_file_extension
-EXAMPLE_IMAGES_FILE_EXTENSION = args.example_images_file_extension
-DIR_CONTAINS_TILES = args.dir_contains_tiles
-NUM_WORKERS = args.num_workers
-BATCH_SIZE = int(BATCH_SIZE * args.batch_size_multiplier)
+RUN_NAME = cli_args.run_name
+WANDB_ENABLED = cli_args.wandb
+EVALUATION_FREQUENCY = cli_args.evaluation_frequency
+SNAPSHOT_FREQUENCY = cli_args.snapshot_frequency
+VALIDATION_SPLIT = cli_args.validation_split
+MAX_TILES = cli_args.max_tiles
+TILE_SIZE = cli_args.tile_size
+OVERLAP_SIZE = cli_args.overlap_size
+INCLUDE_OUTSIDE = cli_args.include_outside
+IMAGES_DIR = cli_args.images_dir
+EXAMPLE_IMAGES_DIR = cli_args.example_images_dir
+IMAGES_FILE_EXTENSION = cli_args.images_file_extension
+EXAMPLE_IMAGES_FILE_EXTENSION = cli_args.example_images_file_extension
+DIR_CONTAINS_TILES = cli_args.dir_contains_tiles
+NUM_WORKERS = cli_args.num_workers
+BATCH_SIZE = int(BATCH_SIZE * cli_args.batch_size_multiplier)
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
 
@@ -487,17 +489,17 @@ for filename in os.listdir(EXAMPLE_IMAGES_DIR):
 def _load_image_as_tensor(path: str) -> np.ndarray:
     path = os.path.join(EXAMPLE_IMAGES_DIR, path)
     image = Image.open(path)
-    return np.array(image).astype(np.float32) / 255
+    img = 2 * (np.array(image).astype(np.float32) / 255.0) - 1
+    return np.stack([img, img, img])
 
 
 # Convert to list of tuples, sorted by pair ID
-EXAMPLE_TILES: List[Tuple[str, Tensor]] = [
+EXAMPLE_TILES: List[Tuple[str, Tuple[Tensor, Tensor]]] = [
     (
         pair["a"],
-        torch.from_numpy(
-            np.array(
-                [_load_image_as_tensor(pair["a"]), _load_image_as_tensor(pair["b"])]
-            )
+        (
+            torch.from_numpy(_load_image_as_tensor(pair["a"])),
+            torch.from_numpy(_load_image_as_tensor(pair["b"])),
         ),
     )
     for key, pair in sorted(example_pairs.items())
@@ -1361,8 +1363,8 @@ def _visualise_all_shapes(save=True):
 # %% MARK: Dataset
 
 
-class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
-    VERSION = "v5"
+class SyntheticDataset(IterableDataset[Tuple[farray, farray, farray]]):
+    VERSION = "v5-raft"
 
     def __init__(self, validation=False):
         self.validation = validation
@@ -1462,12 +1464,12 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
 
             # Apply the mask to the fields
             # mask = mask
-            final_field = field_a * mask + field_b * (1 - mask)
+            final_field: farray = field_a * mask + field_b * (1 - mask)
 
         tile_reference = TILES[idx]
         image = get_tile_from_reference(tile_reference)
 
-        image = image / 255.0
+        image: farray = 2 * (image / 255.0) - 1.0
 
         # Randomly transform the image
         # Rotate 0, 90, 180, 270
@@ -1477,17 +1479,19 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
         if random.random() > 0.5:
             image = np.flip(image, random.randint(0, 1))
 
-        final_field[:, image == 0] = 0.0
+        final_field[:, image == -1.0] = 0.0
 
         # Adjust the minimum and maximum values
-        new_min = random.uniform(0.0, 0.2)
-        new_max = random.uniform(0.8, 1.0)
-        image = np.clip(image, new_min, new_max)
-        image = (image - new_min) / (new_max - new_min)
+        new_range = random.uniform(0.8, 1.0)
+        image = image * new_range
 
         warped_image = self.composer.apply_to_image(image, final_field * scale)
 
-        return np.array([image, warped_image]).astype(np.float32), final_field
+        # Make images (3, H, W)
+        image = np.array([image, image, image])
+        warped_image = np.array([warped_image, warped_image, warped_image])
+
+        return image, warped_image, final_field
 
 
 # %% MARK: Dataset Visualizations
@@ -1501,12 +1505,12 @@ def _visualise_dataset(save=True):
 
     # images, motion = dataset._generate(0, 0)
     for i in range(10):
-        images, motion = dataset._generate(0, 0, scale=(i + 1) / 5)
-        diff = np.abs(images[0] - images[1])
+        image1, image2, motion = dataset._generate(0, 0, scale=(i + 1) / 5)
+        diff = np.abs(image1 - image2)
 
         axes[i, 0].set_title(f"Scale: {(i + 1)/5:.2f}")
-        axes[i, 0].imshow(images[0])
-        axes[i, 1].imshow(images[1])
+        axes[i, 0].imshow(image1, vmin=-1, vmax=1)
+        axes[i, 1].imshow(image2, vmin=-1, vmax=1)
         axes[i, 2].imshow(flow_to_color(motion))
         axes[i, 3].imshow(diff)
 
@@ -1518,180 +1522,556 @@ def _visualise_dataset(save=True):
 # %% MARK: Model
 
 
-class ConvolutionBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+class LayerNorm(nn.Module):
+    r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
+    The ordering of the dimensions in the inputs. channels_last corresponds to inputs with
+    shape (batch_size, height, width, channels) while channels_first corresponds to inputs
+    with shape (batch_size, channels, height, width).
+    """
+
+    def __init__(self, normalized_shape, eps=1e-6, data_format="channels_last"):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(normalized_shape))
+        self.bias = nn.Parameter(torch.zeros(normalized_shape))
+        self.eps = eps
+        self.data_format = data_format
+        if self.data_format not in ["channels_last", "channels_first"]:
+            raise NotImplementedError
+        self.normalized_shape = (normalized_shape,)
+
+    def forward(self, x):
+        if self.data_format == "channels_last":
+            return F.layer_norm(
+                x, self.normalized_shape, self.weight, self.bias, self.eps
+            )
+        elif self.data_format == "channels_first":
+            u = x.mean(1, keepdim=True)
+            s = (x - u).pow(2).mean(1, keepdim=True)
+            x = (x - u) / torch.sqrt(s + self.eps)
+            x = self.weight[:, None, None] * x + self.bias[:, None, None]
+            return x
+
+
+class ConvNextBlock(nn.Module):
+    r"""ConvNeXt Block. There are two equivalent implementations:
+    (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv -> GELU -> 1x1 Conv; all in (N, C, H, W)
+    (2) DwConv -> Permute to (N, H, W, C); LayerNorm (channels_last) -> Linear -> GELU -> Linear; Permute back
+    We use (2) as we find it slightly faster in PyTorch
+
+    Args:
+        dim (int): Number of input channels.
+        drop_path (float): Stochastic depth rate. Default: 0.0
+        layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
+    """
+
+    def __init__(self, dim, output_dim, layer_scale_init_value=1e-6):
+        super().__init__()
+        self.dwconv = nn.Conv2d(
+            dim, dim, kernel_size=7, padding=3, groups=dim
+        )  # depthwise conv
+        self.norm = LayerNorm(dim, eps=1e-6)
+        self.pwconv1 = nn.Linear(
+            dim, 4 * output_dim
+        )  # pointwise/1x1 convs, implemented with linear layers
+        self.act = nn.GELU()
+        self.pwconv2 = nn.Linear(4 * output_dim, dim)
+        self.gamma = (
+            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            if layer_scale_init_value > 0
+            else None
+        )
+        self.final = nn.Conv2d(dim, output_dim, kernel_size=1, padding=0)
+
+    def forward(self, x):
+        input = x
+        x = self.dwconv(x)
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        x = self.norm(x)
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.pwconv2(x)
+        if self.gamma is not None:
+            x = self.gamma * x
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+        x = self.final(input + x)
+        return x
+
+
+class BasicMotionEncoder(nn.Module):
+    def __init__(self, args, dim=128):
+        super(BasicMotionEncoder, self).__init__()
+        cor_planes = args.corr_channel
+        self.convc1 = nn.Conv2d(cor_planes, dim * 2, 1, padding=0)
+        self.convc2 = nn.Conv2d(dim * 2, dim + dim // 2, 3, padding=1)
+        self.convf1 = nn.Conv2d(2, dim, 7, padding=3)
+        self.convf2 = nn.Conv2d(dim, dim // 2, 3, padding=1)
+        self.conv = nn.Conv2d(dim * 2, dim - 2, 3, padding=1)
+
+    def forward(self, flow, corr):
+        cor = F.relu(self.convc1(corr))
+        cor = F.relu(self.convc2(cor))
+        flo = F.relu(self.convf1(flow))
+        flo = F.relu(self.convf2(flo))
+
+        cor_flo = torch.cat([cor, flo], dim=1)
+        out = F.relu(self.conv(cor_flo))
+        return torch.cat([out, flow], dim=1)
+
+
+class BasicUpdateBlock(nn.Module):
+    def __init__(self, args, hdim=128, cdim=128):
+        # net: hdim, inp: cdim
+        super(BasicUpdateBlock, self).__init__()
+        self.args = args
+        self.encoder = BasicMotionEncoder(args, dim=cdim)
+        self.refine = []
+        for i in range(args.num_blocks):
+            self.refine.append(ConvNextBlock(2 * cdim + hdim, hdim))
+        self.refine = nn.ModuleList(self.refine)
+
+    def forward(self, net, inp, corr, flow, upsample=True):
+        motion_features = self.encoder(flow, corr)
+        inp = torch.cat([inp, motion_features], dim=1)
+        for blk in self.refine:
+            net = blk(torch.cat([net, inp], dim=1))
+        return net
+
+
+class InputPadder:
+    """Pads images such that dimensions are divisible by 8"""
+
+    def __init__(self, dims, mode="sintel"):
+        self.ht, self.wd = dims[-2:]
+        pad_ht = (((self.ht // 8) + 1) * 8 - self.ht) % 8
+        pad_wd = (((self.wd // 8) + 1) * 8 - self.wd) % 8
+        if mode == "sintel":
+            self._pad = [
+                pad_wd // 2,
+                pad_wd - pad_wd // 2,
+                pad_ht // 2,
+                pad_ht - pad_ht // 2,
+            ]
+        else:
+            self._pad = [pad_wd // 2, pad_wd - pad_wd // 2, 0, pad_ht]
+
+    def pad(self, *inputs):
+        return [F.pad(x, self._pad, mode="replicate") for x in inputs]
+
+    def unpad(self, x):
+        ht, wd = x.shape[-2:]
+        c = [self._pad[2], ht - self._pad[3], self._pad[0], wd - self._pad[1]]
+        return x[..., c[0] : c[1], c[2] : c[3]]
+
+
+def bilinear_sampler(img, coords, mode="bilinear", mask=False):
+    """Wrapper for grid_sample, uses pixel coordinates"""
+    H, W = img.shape[-2:]
+    xgrid, ygrid = coords.split([1, 1], dim=-1)
+    xgrid = 2 * xgrid / (W - 1) - 1
+    ygrid = 2 * ygrid / (H - 1) - 1
+
+    grid = torch.cat([xgrid, ygrid], dim=-1)
+    img = F.grid_sample(img, grid, align_corners=True)
+
+    assert mask == False
+    # if mask:
+    #     mask = (xgrid > -1) & (ygrid > -1) & (xgrid < 1) & (ygrid < 1)
+    #     return img, mask.float()
+
+    return img
+
+
+def coords_grid(batch, ht, wd, device):
+    coords = torch.meshgrid(
+        torch.arange(ht, device=device), torch.arange(wd, device=device)
+    )
+    coords = torch.stack(coords[::-1], dim=0).float()
+    return coords[None].repeat(batch, 1, 1, 1)
+
+
+class CorrBlock:
+    def __init__(self, fmap1, fmap2, args):
+        self.num_levels = args.corr_levels
+        self.radius = args.corr_radius
+        self.args = args
+        self.corr_pyramid = []
+        # all pairs correlation
+        for i in range(self.num_levels):
+            corr = CorrBlock.corr(fmap1, fmap2, 1)
+            batch, h1, w1, dim, h2, w2 = corr.shape
+            corr = corr.reshape(batch * h1 * w1, dim, h2, w2)
+            fmap2 = F.interpolate(
+                fmap2, scale_factor=0.5, mode="bilinear", align_corners=False
+            )
+            self.corr_pyramid.append(corr)
+
+    def __call__(self, coords, dilation=None):
+        r = self.radius
+        coords = coords.permute(0, 2, 3, 1)
+        batch, h1, w1, _ = coords.shape
+
+        if dilation is None:
+            dilation = torch.ones(batch, 1, h1, w1, device=coords.device)
+
+        # print(dilation.max(), dilation.mean(), dilation.min())
+        out_pyramid = []
+        for i in range(self.num_levels):
+            corr = self.corr_pyramid[i]
+            device = coords.device
+            dx = torch.linspace(-r, r, 2 * r + 1, device=device)
+            dy = torch.linspace(-r, r, 2 * r + 1, device=device)
+            delta = torch.stack(torch.meshgrid(dy, dx), dim=-1)
+            delta_lvl = delta.view(1, 2 * r + 1, 2 * r + 1, 2)
+            delta_lvl = delta_lvl * dilation.view(batch * h1 * w1, 1, 1, 1)
+            centroid_lvl = coords.reshape(batch * h1 * w1, 1, 1, 2) / 2**i
+            coords_lvl = centroid_lvl + delta_lvl
+            corr = bilinear_sampler(corr, coords_lvl)
+            corr = corr.view(batch, h1, w1, -1)
+            out_pyramid.append(corr)
+
+        out = torch.cat(out_pyramid, dim=-1)
+        out = out.permute(0, 3, 1, 2).contiguous().float()
+        return out
+
+    @staticmethod
+    def corr(fmap1, fmap2, num_head):
+        batch, dim, h1, w1 = fmap1.shape
+        h2, w2 = fmap2.shape[2:]
+        fmap1 = fmap1.view(batch, num_head, dim // num_head, h1 * w1)
+        fmap2 = fmap2.view(batch, num_head, dim // num_head, h2 * w2)
+        corr = fmap1.transpose(2, 3) @ fmap2
+        corr = corr.reshape(batch, num_head, h1, w1, h2, w2).permute(0, 2, 3, 1, 4, 5)
+        return corr / torch.sqrt(torch.tensor(dim).float())
+
+
+def conv1x1(in_planes, out_planes, stride=1):
+    """1x1 convolution without padding"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, padding=0)
+
+
+def conv3x3(in_planes, out_planes, stride=1):
+    """3x3 convolution with padding"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1)
+
+
+class BasicBlock(nn.Module):
+    def __init__(self, in_planes, planes, stride=1, norm_layer=nn.BatchNorm2d):
         super().__init__()
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=kernel_size,
-                stride=stride,
-                padding=padding,
-                bias=False,
-            ),
-            nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.1, inplace=True),
+        # self.sparse = sparse
+        self.conv1 = conv3x3(in_planes, planes, stride)
+        self.conv2 = conv3x3(planes, planes)
+        self.bn1 = norm_layer(planes)
+        self.bn2 = norm_layer(planes)
+        self.relu = nn.ReLU(inplace=True)
+        if stride == 1 and in_planes == planes:
+            self.downsample = None
+        else:
+            self.bn3 = norm_layer(planes)
+            self.downsample = nn.Sequential(
+                conv1x1(in_planes, planes, stride=stride), self.bn3
+            )
+
+    def forward(self, x):
+        y = x
+        y = self.relu(self.bn1(self.conv1(y)))
+        y = self.relu(self.bn2(self.conv2(y)))
+        if self.downsample is not None:
+            x = self.downsample(x)
+        return self.relu(x + y)
+
+
+class ResNetFPN(nn.Module):
+    """
+    ResNet18, output resolution is 1/8.
+    Each block has 2 layers.
+    """
+
+    def __init__(
+        self,
+        args,
+        input_dim=3,
+        output_dim=256,
+        ratio=1.0,
+        norm_layer=nn.BatchNorm2d,
+        init_weight=False,
+    ):
+        super().__init__()
+        # Config
+        block = BasicBlock
+        block_dims = args.block_dims
+        initial_dim = args.initial_dim
+        self.init_weight = init_weight
+        self.input_dim = input_dim
+        # Class Variable
+        self.in_planes = initial_dim
+        for i in range(len(block_dims)):
+            block_dims[i] = int(block_dims[i] * ratio)
+        # Networks
+        self.conv1 = nn.Conv2d(
+            input_dim, initial_dim, kernel_size=7, stride=2, padding=3
+        )
+        self.bn1 = norm_layer(initial_dim)
+        self.relu = nn.ReLU(inplace=True)
+        if args.pretrain == "resnet34":
+            n_block = [3, 4, 6]
+        elif args.pretrain == "resnet18":
+            n_block = [2, 2, 2]
+        else:
+            raise NotImplementedError
+        self.layer1 = self._make_layer(
+            block, block_dims[0], stride=1, norm_layer=norm_layer, num=n_block[0]
+        )  # 1/2
+        self.layer2 = self._make_layer(
+            block, block_dims[1], stride=2, norm_layer=norm_layer, num=n_block[1]
+        )  # 1/4
+        self.layer3 = self._make_layer(
+            block, block_dims[2], stride=2, norm_layer=norm_layer, num=n_block[2]
+        )  # 1/8
+        self.final_conv = conv1x1(block_dims[2], output_dim)
+        self._init_weights(args)
+
+    def _init_weights(self, args):
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d, nn.GroupNorm)):
+                if m.weight is not None:
+                    nn.init.constant_(m.weight, 1)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+        if self.init_weight:
+            from torchvision.models import (
+                resnet18,
+                ResNet18_Weights,
+                resnet34,
+                ResNet34_Weights,
+            )
+
+            if args.pretrain == "resnet18":
+                pretrained_dict = resnet18(
+                    weights=ResNet18_Weights.IMAGENET1K_V1
+                ).state_dict()
+            else:
+                pretrained_dict = resnet34(
+                    weights=ResNet34_Weights.IMAGENET1K_V1
+                ).state_dict()
+            model_dict = self.state_dict()
+            pretrained_dict = {
+                k: v for k, v in pretrained_dict.items() if k in model_dict
+            }
+            if self.input_dim == 6:
+                for k, v in pretrained_dict.items():
+                    if k == "conv1.weight":
+                        pretrained_dict[k] = torch.cat((v, v), dim=1)
+            model_dict.update(pretrained_dict)
+            self.load_state_dict(model_dict, strict=False)
+
+    def _make_layer(self, block, dim, stride=1, norm_layer=nn.BatchNorm2d, num=2):
+        layers = []
+        layers.append(block(self.in_planes, dim, stride=stride, norm_layer=norm_layer))
+        for i in range(num - 1):
+            layers.append(block(dim, dim, stride=1, norm_layer=norm_layer))
+        self.in_planes = dim
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        # ResNet Backbone
+        x = self.relu(self.bn1(self.conv1(x)))
+        for i in range(len(self.layer1)):
+            x = self.layer1[i](x)
+        for i in range(len(self.layer2)):
+            x = self.layer2[i](x)
+        for i in range(len(self.layer3)):
+            x = self.layer3[i](x)
+        # Output
+        output = self.final_conv(x)
+        return output
+
+
+class RAFT(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        args = Namespace()
+        args.use_var = True
+        args.var_min = 0
+        args.var_max = 10
+        args.pretrain = "resnet34"
+        args.initial_dim = 64
+        args.block_dims = [64, 128, 256]
+        args.radius = 4
+        args.dim = 128
+        args.num_blocks = 2
+        args.iters = 4
+
+        self.args = args
+        self.output_dim = args.dim * 2
+
+        self.args.corr_levels = 4
+        self.args.corr_radius = args.radius
+        self.args.corr_channel = args.corr_levels * (args.radius * 2 + 1) ** 2
+        self.cnet = ResNetFPN(
+            args,
+            input_dim=6,
+            output_dim=2 * self.args.dim,
+            norm_layer=nn.BatchNorm2d,
+            init_weight=True,
         )
 
-        self.residual = nn.Sequential()
-        if in_channels != out_channels:
-            self.residual = nn.Sequential(
-                nn.Conv2d(
-                    in_channels, out_channels, kernel_size=1, stride=stride, bias=False
-                ),
-                nn.BatchNorm2d(out_channels),
+        # conv for iter 0 results
+        self.init_conv = conv3x3(2 * args.dim, 2 * args.dim)
+        self.upsample_weight = nn.Sequential(
+            # convex combination of 3x3 patches
+            nn.Conv2d(args.dim, args.dim * 2, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(args.dim * 2, 64 * 9, 1, padding=0),
+        )
+        self.flow_head = nn.Sequential(
+            # flow(2) + weight(2) + log_b(2)
+            nn.Conv2d(args.dim, 2 * args.dim, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(2 * args.dim, 6, 3, padding=1),
+        )
+        if args.iters > 0:
+            self.fnet = ResNetFPN(
+                args,
+                input_dim=3,
+                output_dim=self.output_dim,
+                norm_layer=nn.BatchNorm2d,
+                init_weight=True,
             )
+            self.update_block = BasicUpdateBlock(args, hdim=args.dim, cdim=args.dim)
 
-    def forward(self, x):
-        return self.conv(x) + self.residual(x)
+    def initialize_flow(self, img):
+        """Flow is represented as difference between two coordinate grids flow = coords2 - coords1"""
+        N, C, H, W = img.shape
+        coords1 = coords_grid(N, H // 8, W // 8, device=img.device)
+        coords2 = coords_grid(N, H // 8, W // 8, device=img.device)
+        return coords1, coords2
 
+    def upsample_data(self, flow, info, mask):
+        """Upsample [H/8, W/8, C] -> [H, W, C] using convex combination"""
+        N, C, H, W = info.shape
+        mask = mask.view(N, 1, 9, 8, 8, H, W)
+        mask = torch.softmax(mask, dim=2)
 
-class SelfAttention(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.q_conv = nn.Conv2d(channels, channels // 8, kernel_size=1)
-        self.k_conv = nn.Conv2d(channels, channels // 8, kernel_size=1)
-        self.v_conv = nn.Conv2d(channels, channels, kernel_size=1)
-        self.o_conv = nn.Conv2d(channels, channels, kernel_size=1)
-        self.gamma = nn.Parameter(torch.zeros(1))  # Learnable scale parameter
+        up_flow = F.unfold(8 * flow, (3, 3), padding=1)
+        up_flow = up_flow.view(N, 2, 9, 1, 1, H, W)
+        up_info = F.unfold(info, (3, 3), padding=1)
+        up_info = up_info.view(N, C, 9, 1, 1, H, W)
 
-    def forward(self, x):
-        batch_size, channels, height, width = x.size()
+        up_flow = torch.sum(mask * up_flow, dim=2)
+        up_flow = up_flow.permute(0, 1, 4, 2, 5, 3)
+        up_info = torch.sum(mask * up_info, dim=2)
+        up_info = up_info.permute(0, 1, 4, 2, 5, 3)
 
-        query = (
-            self.q_conv(x).view(batch_size, -1, width * height).permute(0, 2, 1)
-        )  # [B, N, C'] N=H*W, C'=C//8
-        key = self.k_conv(x).view(batch_size, -1, width * height)  # [B, C', N]
-        value = self.v_conv(x).view(batch_size, -1, width * height)  # [B, C, N]
+        return up_flow.reshape(N, 2, 8 * H, 8 * W), up_info.reshape(N, C, 8 * H, 8 * W)
 
-        attention = torch.bmm(query, key)  # [B, N, N]
-        attention = torch.softmax(attention, dim=-1)
+    def forward(self, image1, image2, iters=None, flow_gt=None, test_mode=False):
+        """Estimate optical flow between pair of frames"""
+        N, _, H, W = image1.shape
+        if iters is None:
+            iters = self.args.iters
+        if flow_gt is None:
+            flow_gt = torch.zeros(N, 2, H, W, device=image1.device)
 
-        attention_value = torch.bmm(value, attention)  # [B, C, N]
-        attention_value = attention_value.view(
-            batch_size, channels, height, width
-        )  # [B, C, H, W]
+        image1 = 2 * (image1 / 255.0) - 1.0
+        image2 = 2 * (image2 / 255.0) - 1.0
+        image1 = image1.contiguous()
+        image2 = image2.contiguous()
+        flow_predictions = []
+        info_predictions = []
 
-        output = self.o_conv(attention_value)
-        return self.gamma * output + x  # Residual connection with learnable scale
+        # padding
+        padder = InputPadder(image1.shape)
+        image1, image2 = padder.pad(image1, image2)
+        N, _, H, W = image1.shape
+        dilation = torch.ones(N, 1, H // 8, W // 8, device=image1.device)
+        # run the context network
+        cnet = self.cnet(torch.cat([image1, image2], dim=1))
+        cnet = self.init_conv(cnet)
+        net, context = torch.split(cnet, [self.args.dim, self.args.dim], dim=1)
 
+        # init flow
+        flow_update = self.flow_head(net)
+        weight_update = 0.25 * self.upsample_weight(net)
+        flow_8x = flow_update[:, :2]
+        info_8x = flow_update[:, 2:]
+        flow_up, info_up = self.upsample_data(flow_8x, info_8x, weight_update)
+        flow_predictions.append(flow_up)
+        info_predictions.append(info_up)
 
-class ComboMotionVectorConvolutionNetwork(nn.Module):
-    def __init__(self, input_images=2, base_channels=64, num_conv_blocks=3):
-        super().__init__()
-        self.input_images = input_images
-        self.vector_channels = 2
-        channels = base_channels
+        # if self.args.iters > 0: # Value is always 4
+        # run the feature network
+        fmap1_8x = self.fnet(image1)
+        fmap2_8x = self.fnet(image2)
+        corr_fn = CorrBlock(fmap1_8x, fmap2_8x, self.args)
 
-        # Downsampling path (No changes needed)
-        self.conv1 = ConvolutionBlock(input_images, channels)
-        self.pool1 = nn.MaxPool2d(kernel_size=2)
-        self.conv2 = ConvolutionBlock(channels, channels * 2)
-        self.pool2 = nn.MaxPool2d(kernel_size=2)
+        for itr in range(iters):
+            N, _, H, W = flow_8x.shape
+            flow_8x = flow_8x.detach()
+            coords2 = (coords_grid(N, H, W, device=image1.device) + flow_8x).detach()
+            corr = corr_fn(coords2, dilation=dilation)
+            net = self.update_block(net, context, corr, flow_8x)
+            flow_update = self.flow_head(net)
+            weight_update = 0.25 * self.upsample_weight(net)
+            flow_8x = flow_8x + flow_update[:, :2]
+            info_8x = flow_update[:, 2:]
+            # upsample predictions
+            flow_up, info_up = self.upsample_data(flow_8x, info_8x, weight_update)
+            flow_predictions.append(flow_up)
+            info_predictions.append(info_up)
 
-        conv_blocks = []
-        current_channels = channels * 2
-        feature_channels = [channels, channels * 2]
-        down_feature_channel_sizes = []
-        for _ in range(num_conv_blocks):
-            channels *= 2
-            down_feature_channel_sizes.append(current_channels)
-            conv_blocks.extend(
-                [
-                    ConvolutionBlock(current_channels, channels, kernel_size=3),
-                    ConvolutionBlock(channels, channels, kernel_size=3),
-                    nn.MaxPool2d(kernel_size=2),
-                ]
-            )
-            current_channels = channels
-            feature_channels.append(channels)
-        self.conv_layers_down = nn.Sequential(*conv_blocks[:-1])
-        down_feature_channel_sizes.append(current_channels)
+        for i in range(len(info_predictions)):
+            flow_predictions[i] = padder.unpad(flow_predictions[i])
+            info_predictions[i] = padder.unpad(info_predictions[i])
 
-        # Bottleneck with Attention (No changes needed)
-        self.attention = SelfAttention(channels)
+        if test_mode == False:
+            # exlude invalid pixels and extremely large diplacements
+            nf_predictions = []
+            for i in range(len(info_predictions)):
+                if not self.args.use_var:
+                    var_max = var_min = 0
+                else:
+                    var_max = self.args.var_max
+                    var_min = self.args.var_min
 
-        # Upsampling path (Corrected in Attempt 4)
-        up_channels = channels  # up_channels = 512
-        self.upconv1 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # 512 -> 256
-        self.conv_up1 = ConvolutionBlock(
-            up_channels // 2 + down_feature_channel_sizes[-2], up_channels // 2
-        )  # Input: 512, Output: 256
+                raw_b = info_predictions[i][:, 2:]
+                log_b = torch.zeros_like(raw_b)
+                weight = info_predictions[i][:, :2]
+                # Large b Component
+                log_b[:, 0] = torch.clamp(raw_b[:, 0], min=0, max=var_max)
+                # Small b Component
+                log_b[:, 1] = torch.clamp(raw_b[:, 1], min=var_min, max=0)
+                # term2: [N, 2, m, H, W]
+                term2 = ((flow_gt - flow_predictions[i]).abs().unsqueeze(2)) * (
+                    torch.exp(-log_b).unsqueeze(1)
+                )
+                # term1: [N, m, H, W]
+                term1 = weight - math.log(2) - log_b
+                nf_loss = torch.logsumexp(
+                    weight, dim=1, keepdim=True
+                ) - torch.logsumexp(term1.unsqueeze(1) - term2, dim=2)
+                nf_predictions.append(nf_loss)
 
-        up_channels = 256  # Reset up_channels to output of conv_up1 = 256
-        self.upconv2 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # Revised: 256 -> 128
-        self.conv_up2 = ConvolutionBlock(
-            up_channels // 2 + down_feature_channel_sizes[-3], up_channels // 2
-        )  # Revised Input: 384, Output: 128
-
-        up_channels //= 2  # up_channels = 128
-        self.upconv3 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # Revised: 128 -> 64
-        self.conv_up3 = ConvolutionBlock(
-            up_channels // 2 + feature_channels[1], up_channels // 2
-        )  # Revised Input: 192, Output: 64
-
-        up_channels //= 2  # up_channels = 64
-        self.upconv4 = nn.ConvTranspose2d(
-            up_channels, up_channels // 2, kernel_size=4, stride=2, padding=1
-        )  # Revised: 64 -> 32
-        self.conv_up4 = ConvolutionBlock(
-            up_channels // 2 + feature_channels[0], up_channels // 2
-        )  # Revised Input: 96, Output: 32
-
-        up_channels //= 2  # up_channels = 32
-        self.output_conv = nn.Conv2d(
-            up_channels, self.vector_channels, kernel_size=3, stride=1, padding=1
-        )  # Revised: Input 32 -> Output 2
-
-    def forward(self, x):
-        # Downsampling
-        conv1 = self.conv1(x)
-        pool1 = self.pool1(conv1)
-        conv2 = self.conv2(pool1)
-        pool2 = self.pool2(conv2)
-        conv_down = pool2
-        intermediate_features = [conv1, conv2]
-        down_features_to_concat = []
-
-        # Deeper Downsampling
-        for i, layer in enumerate(self.conv_layers_down):
-            conv_down = layer(conv_down)
-            if isinstance(layer, ConvolutionBlock) and (i + 1) % 3 == 1:
-                down_features_to_concat.append(conv_down)
-
-        conv_bottleNeck = self.attention(conv_down)
-
-        # Upsampling
-        upconv1 = self.upconv1(conv_bottleNeck)
-        upconv1_concat = torch.cat(
-            [upconv1, down_features_to_concat[-2]], dim=1
-        )  # Corrected index
-        conv_up1 = self.conv_up1(upconv1_concat)
-
-        upconv2 = self.upconv2(conv_up1)
-        upconv2_concat = torch.cat(
-            [upconv2, down_features_to_concat[-3]], dim=1
-        )  # Corrected index
-        conv_up2 = self.conv_up2(upconv2_concat)
-
-        upconv3 = self.upconv3(conv_up2)
-        upconv3_concat = torch.cat([upconv3, intermediate_features[1]], dim=1)
-        conv_up3 = self.conv_up3(upconv3_concat)
-
-        upconv4 = self.upconv4(conv_up3)
-        upconv4_concat = torch.cat([upconv4, intermediate_features[0]], dim=1)
-        conv_up4 = self.conv_up4(upconv4_concat)
-
-        output = self.output_conv(conv_up4)
-        return output
+            return {
+                "final": flow_predictions[-1],
+                "flow": flow_predictions,
+                "info": info_predictions,
+                "nf": nf_predictions,
+            }
+        else:
+            return {
+                "final": flow_predictions[-1],
+                "flow": flow_predictions,
+                "info": info_predictions,
+                "nf": None,
+            }
 
 
 # %% MARK: Create Dataloader
@@ -1712,26 +2092,53 @@ print(f" === Created DataLoaders ({SyntheticDataset.VERSION}) ===\n\n")
 
 # %% MARK: Create Model
 
-model = ComboMotionVectorConvolutionNetwork().to(device)
+model = RAFT().to(device)
 if os.path.exists(SNAPSHOT_FILE):
     model.load_state_dict(torch.load(SNAPSHOT_FILE, weights_only=True))
 
-print(f" === Created Model ({ComboMotionVectorConvolutionNetwork.__name__}) ===")
+RAFT_PARAMS = {
+    "corr_levels": 4,
+    "corr_radius": 4,
+    "hidden_dim": 128,
+    "context_dim": 128,
+}
+
+print(f" === Created Model ({RAFT.__name__}) ===")
 print(model)
 print("\n\n")
 
 # %% MARK: Loss Function
-LOSS_FUNCTION = "EPE"
+LOSS_FUNCTION = "Mixture-of-Laplace"
+
+# {
+#     "final": flow_predictions[-1],
+#     "flow": flow_predictions,
+#     "info": info_predictions,
+#     "nf": None,
+# }
 
 
-def loss_function(flow_preds: Tensor, flow_gt: Tensor):
+def loss_function(
+    output: Dict[str, Tensor], flow_gt: Tensor, gamma=0.85, max_flow=400
+) -> Tuple[Tensor, Dict[str, float]]:
     """Loss function defined over sequence of flow predictions"""
+    n_predictions = len(output["flow"])
+    flow_loss: Tensor = torch.tensor(0.0).to(flow_gt.device)
+    # exlude invalid pixels and extremely large diplacements
+    mag = torch.sum(flow_gt**2, dim=1).sqrt()
+    valid = mag < max_flow
+    for i in range(n_predictions):
+        i_weight = gamma ** (n_predictions - i - 1)
+        loss_i = output["nf"][i]
+        final_mask = (
+            (~torch.isnan(loss_i.detach()))
+            & (~torch.isinf(loss_i.detach()))
+            & valid[:, None]
+        )
+        flow_loss += i_weight * ((final_mask * loss_i).sum() / final_mask.sum())
 
-    i_loss = (flow_preds - flow_gt).abs()
-    flow_loss = (i_loss).mean()
-
-    epe = torch.sum((flow_preds - flow_gt) ** 2, dim=1).sqrt()
-    epe = epe.view(-1)
+    # Compute EPE
+    epe = torch.sum((flow_gt - output["final"]) ** 2, dim=1).sqrt()
 
     metrics = {
         "epe": epe.mean().item(),
@@ -1757,25 +2164,26 @@ def _visualise_model(
         for ax in axes.flatten():
             ax.axis("off")
 
-        images, motion = validation_dataset._generate(
+        image1, image2, motion = validation_dataset._generate(
             idx + (didx * i), seed + (dseed * i)
         )
 
-        batch_images = torch.from_numpy(np.array([images])).float().to(device)
-        batch_vectors = torch.from_numpy(np.array([motion])).float().to(device)
+        batch_image1 = torch.from_numpy(image1).unsqueeze(0).to(device)
+        batch_image2 = torch.from_numpy(image2).unsqueeze(0).to(device)
+        batch_vectors = torch.from_numpy(motion).unsqueeze(0).to(device)
 
         model.eval()
         with torch.no_grad():
-            prediction = model(batch_images)
+            prediction = model(batch_image1, batch_image2)
 
         loss, metrics = loss_function(prediction, batch_vectors)
 
-        predicted_vectors = prediction.squeeze(0).cpu().numpy()
+        predicted_vectors = prediction["final"].squeeze(0).cpu().numpy()
 
         axes[0].set_title(f"Original Val idx: {idx}")
-        axes[0].imshow(images[0])
+        axes[0].imshow(image1[0], vmin=-1, vmax=1)
         axes[1].set_title("Morphed")
-        axes[1].imshow(images[1])
+        axes[1].imshow(image2[0], vmin=-1, vmax=1)
         axes[2].set_title(f"Vector Field seed: {seed}")
         axes[2].imshow(flow_to_color(motion))
         axes[3].set_title("Prediction")
@@ -1800,23 +2208,34 @@ def _visualise_model(
 
 OPTIMIZER_OPTIONS = {
     "type": "AdamW",
-    "learning_rate": 0.001,
+    "learning_rate": 4e-4,
+    "weight_decay": 1e-5,
+    "epsilon": 1e-8,
 }
 
-optimizer = optim.AdamW(model.parameters(), lr=OPTIMIZER_OPTIONS["learning_rate"])
+optimizer = optim.AdamW(
+    model.parameters(),
+    lr=OPTIMIZER_OPTIONS["learning_rate"],
+    weight_decay=OPTIMIZER_OPTIONS["weight_decay"],
+    eps=OPTIMIZER_OPTIONS["epsilon"],
+)
 
 SCHEDULER_OPTIONS = {
-    "type": "ReduceLROnPlateau",
-    "mode": "min",
-    "factor": 0.1,
-    "patience": 5,
+    "type": "OneCycleLR",
+    "max_learning_rate": OPTIMIZER_OPTIONS["learning_rate"],
+    "total_steps": 100_000,
+    "pct_start": 0.05,
+    "anneal_strategy": "linear",
+    "cycle_momentum": False,
 }
 
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer,
-    mode=SCHEDULER_OPTIONS["mode"],
-    factor=SCHEDULER_OPTIONS["factor"],
-    patience=SCHEDULER_OPTIONS["patience"],
+scheduler = optim.lr_scheduler.OneCycleLR(
+    optimizer=optimizer,
+    max_lr=SCHEDULER_OPTIONS["max_learning_rate"],
+    total_steps=SCHEDULER_OPTIONS["total_steps"],
+    pct_start=SCHEDULER_OPTIONS["pct_start"],
+    anneal_strategy=SCHEDULER_OPTIONS["anneal_strategy"],
+    cycle_momentum=SCHEDULER_OPTIONS["cycle_momentum"],
 )
 
 # %% MARK: Weights and Biases Setup
@@ -1826,7 +2245,8 @@ wandb_config = {
     "gpu": GPU,
     "gpu_memory": GPU_MEMORY,
     "batch_size": BATCH_SIZE,
-    "architecture": ComboMotionVectorConvolutionNetwork.__name__,
+    "architecture": RAFT.__name__,
+    "model_params": RAFT_PARAMS,
     "dataset": {
         "version": SyntheticDataset.VERSION,
         "training_tiles": NUM_TRAINING_TILES,
@@ -1836,6 +2256,10 @@ wandb_config = {
     "optimizer": OPTIMIZER_OPTIONS,
     "scheduler": SCHEDULER_OPTIONS,
 }
+
+print(" === Run Config ===\n")
+print(wandb_config)
+print("\n")
 
 starting_batch = 0
 run = None
@@ -1884,23 +2308,30 @@ print("- GPU: ", GPU)
 print("- Starting Batch: ", starting_batch)
 print("- Starting Training: ", training_start_time)
 print("- Last Save Snapshot: ", last_save_snapshot_time)
+print("- Evaluation Frequency: ", EVALUATION_FREQUENCY)
+print("- Snapshot Frequency: ", SNAPSHOT_FREQUENCY)
 print("\n\n")
 
-for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
+for idx, (batch_image1, batch_image2, batch_vectors) in enumerate(training_dataloader):
     batch += 1
 
     model.train()
+    optimizer.zero_grad()
 
-    batch_images, batch_vectors = batch_images.to(device), batch_vectors.to(device)
+    batch_image1, batch_image2, batch_vectors = (
+        batch_image1.to(device),
+        batch_image2.to(device),
+        batch_vectors.to(device),
+    )
 
-    pred = model(batch_images)
+    pred = model(batch_image1, batch_image2)
     loss, metrics = loss_function(pred, batch_vectors)
     loss.backward()
 
     total_grads = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
     optimizer.step()
-    optimizer.zero_grad()
+    scheduler.step()
 
     log: Dict[str, Any] = defaultdict(dict)
     log["batch"] = batch
@@ -1930,11 +2361,12 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
 
         with torch.no_grad():
 
-            for batch_images, batch_vectors in validation_dataloader:
-                batch_images = batch_images.to(device)
+            for batch_image1, batch_image2, batch_vectors in validation_dataloader:
+                batch_image1 = batch_image1.to(device)
+                batch_image2 = batch_image2.to(device)
                 batch_vectors = batch_vectors.to(device)
 
-                pred = model(batch_images)
+                pred = model(batch_image1, batch_image2)
                 loss, metrics = loss_function(pred, batch_vectors)
 
                 samples += 1
@@ -1945,7 +2377,6 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
                 epes_5px += metrics["5px"]
 
         average_validation_loss = validation_losses / samples
-        scheduler.step(average_validation_loss)
 
         average_epes = epes / samples
         average_epes_1px = epes_1px / samples
@@ -1988,10 +2419,12 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
         with torch.no_grad():
             samples = []
             for example_id, example in enumerate(EXAMPLE_TILES):
-                example_path, example = example
-                batch_example = example.unsqueeze(0).to(device)
+                example_path, example_images = example
+                image1, image2 = example_images
+                batch_image1 = image1.unsqueeze(0).to(device)
+                batch_image2 = image2.unsqueeze(0).to(device)
 
-                example_pred = model(batch_example)
+                example_pred = model(batch_image1, batch_image2)
                 loss, metrics = loss_function(example_pred, batch_vectors)
 
                 fig, axes = plt.subplots(1, 3, figsize=(12, 5))
@@ -1999,14 +2432,14 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
                 for ax in axes.flatten():
                     ax.axis("off")
 
-                predicted_vectors = example_pred.squeeze(0).cpu().numpy()
+                predicted_vectors = example_pred["final"].squeeze(0).cpu().numpy()
 
                 fig.suptitle(f"Batch {batch}")
 
                 axes[0].set_title(f"Original Val idx: {idx}")
-                axes[0].imshow(example[0].cpu().numpy())
+                axes[0].imshow(image1[0], vmin=-1, vmax=1)
                 axes[1].set_title("Morphed")
-                axes[1].imshow(example[1].cpu().numpy())
+                axes[1].imshow(image2[0], vmin=-1, vmax=1)
                 axes[2].set_title("Prediction")
                 axes[2].imshow(flow_to_color(predicted_vectors))
 
