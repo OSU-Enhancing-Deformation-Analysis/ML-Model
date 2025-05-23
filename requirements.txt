@@ -1,0 +1,12 @@
+flow-vis==0.1
+imageio==2.36.0
+matplotlib==3.9.2
+numpy==1.26.4
+pillow==11.0.0
+pyfastnoisesimd==0.4.2
+scikit-image==0.24.0
+scipy==1.14.1
+torch==2.6.0+cu126
+torchaudio==2.6.0+cu126
+torchvision==0.21.0+cu126
+wandb==0.19.5

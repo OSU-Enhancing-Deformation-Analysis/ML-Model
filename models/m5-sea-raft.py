@@ -113,7 +113,7 @@ EXAMPLE_IMAGES_DIR = "../../raw/g79test/"
 EXAMPLE_IMAGES_FILE_EXTENSION = ".png"
 
 TILE_SIZE = 256  # Pixels
-MAX_TILES = 1000
+MAX_TILES = 1000000
 # Validation split
 # The validation split is the percentage of the dataset that is used for validation
 VALIDATION_SPLIT = 0.05

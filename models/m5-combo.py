@@ -1890,6 +1890,7 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
     batch += 1
 
     model.train()
+    optimizer.zero_grad()
 
     batch_images, batch_vectors = batch_images.to(device), batch_vectors.to(device)
 
@@ -1900,7 +1901,6 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
     total_grads = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
     optimizer.step()
-    optimizer.zero_grad()
 
     log: Dict[str, Any] = defaultdict(dict)
     log["batch"] = batch
