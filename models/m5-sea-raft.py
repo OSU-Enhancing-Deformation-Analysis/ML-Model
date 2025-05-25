@@ -125,6 +125,10 @@ OVERLAP_SIZE = 64  # Pixels
 # Will produce tiles with black regions outside the original image
 # The CENTER_SIZE will always have image content
 INCLUDE_OUTSIDE = False
+# Darkness threshold for black regions
+# All pixel values lower or equal to this threshold will be considered black
+# and no motion will be expected for these regions
+ZERO_MOTION_THRESHOLD = 0
 
 # %% MARK: Load CLI Options
 
@@ -199,6 +203,13 @@ parser.add_argument(
     type=int,
     help="The number of workers to use for the dataloader",
 )
+parser.add_argument(
+    "--zero_motion_threshold",
+    default=ZERO_MOTION_THRESHOLD,
+    type=int,
+    help="Value 0-255 to use as a threshold for zero motion",
+)
+
 # Boolean handling
 
 wandb_arg_group = parser.add_mutually_exclusive_group()
@@ -1469,6 +1480,8 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray, farray]]):
         tile_reference = TILES[idx]
         image = get_tile_from_reference(tile_reference)
 
+        no_motion_mask = image <= ZERO_MOTION_THRESHOLD
+
         image: farray = 2 * (image / 255.0) - 1.0
 
         # Randomly transform the image
@@ -1479,7 +1492,7 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray, farray]]):
         if random.random() > 0.5:
             image = np.flip(image, random.randint(0, 1))
 
-        final_field[:, image == -1.0] = 0.0
+        final_field[:, no_motion_mask] = 0.0
 
         # Adjust the minimum and maximum values
         new_range = random.uniform(0.8, 1.0)

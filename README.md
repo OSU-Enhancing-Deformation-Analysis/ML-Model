@@ -103,6 +103,7 @@ The main logic is contained in a single Python script, `m5-combo.py`. The file i
         *   `VALIDATION_SPLIT`: The percentage of tiles to set aside for validation (checking model performance on unseen data).
         *   `OVERLAP_SIZE`: When tiling full images, this is how much overlap (in pixels) there will be between adjacent tiles. Overlap helps ensure features near tile edges are seen in multiple contexts. A higher value will mean more tiles are created giving the model more training data.
         *   `INCLUDE_OUTSIDE`: If `True` when tiling, tiles can include black regions from outside the original image boundaries. If `False`, tiles are adjusted to stay within image boundaries.
+        *   `ZERO_MOTION_THRESHOLD`: If a pixel value is lower than or equal to this threshold, it will be considered "black" and no motion will be expected for that region. This is useful for ignoring regions that are dark or otherwise uninteresting.
     *   **Why:** Tiling is important for this synthetic dataset because all the "vector fields" and "shape masks" are calibrated for a specific tile size. While most Convolutional models can work on any image resolution without adjustment, this is not one of them due to the self-attention and the synthetic data it is trained on. Overlapping tiles prevent information loss at edges. Validation split ensures an unbiased measure of performance.
 
 *   [**`MARK: Load CLI Options`**](https://github.com/OSU-Enhancing-Deformation-Analysis/ML-Model/blob/refs/heads/main/m5-combo.py#L127-L272):
@@ -353,6 +354,7 @@ This will:
 | `--wandb_enabled` / `--wandb_disabled` | `WANDB_ENABLED`             | Enable/disable Weights & Biases logging.                                                                   | Disable if you don't want to use WandB or are running quick local tests.                                                                    |
 | `--dir_contains_tiles` / `--dir_contains_full_images` | `DIR_CONTAINS_TILES`        | Tells script if `IMAGES_DIR` has pre-cut tiles or full images.                                         | Set according to your data format.                                                                                                           |
 | `--include_outside` / `--exclude_outside` | `INCLUDE_OUTSIDE`           | Whether tiles can include areas outside the original image (padded with black).                            | `include_outside` can generate more tiles, especially from edges/corners.                                                                    |
+| `--zero_motion_threshold`      | `ZERO_MOTION_THRESHOLD`     | Value 0-255 to use as a threshold for zero motion.                                                          | This is useful for ignoring regions that are dark or otherwise uninteresting.                                                                |
 
 **Changing In-Script Constants Directly:**
 For settings not available as command-line arguments, or if you prefer, you can directly edit their values in the `m5-combo.py` script, typically in the "MARK: Constants" or "MARK: Tile Loading" sections.
