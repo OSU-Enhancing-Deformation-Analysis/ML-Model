@@ -1,5 +1,3 @@
-# %% [markdown]
-#
 # Important things to know about this notebook:
 #
 # - Model architecture is RAFT
@@ -21,7 +19,7 @@
 # - Uses AdamW for the optimizer
 #
 
-# %% MARK: Imports
+#region Imports
 import os
 import glob
 import re
@@ -60,7 +58,9 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 import torch.nn.functional as F
 
-# %% MARK: Constants
+#endregion
+
+#region Constants
 
 # Load the CUDA GPU if available
 device = (
@@ -130,7 +130,9 @@ INCLUDE_OUTSIDE = False
 # and no motion will be expected for these regions
 ZERO_MOTION_THRESHOLD = 0
 
-# %% MARK: Load CLI Options
+#endregion
+
+#region Load CLI Options
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -283,7 +285,10 @@ BATCH_SIZE = int(BATCH_SIZE * cli_args.batch_size_multiplier)
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
 
-# %% MARK: Load Tiles
+#endregion
+
+#region Load Tiles
+
 print(" === Image Loading ===\n")
 print(f"- Loading images from {IMAGES_DIR}")
 IMAGE_PATHS = glob.glob(
@@ -520,7 +525,9 @@ EXAMPLE_TILES: List[Tuple[str, Tuple[Tensor, Tensor]]] = [
 print(f"- Found {len(EXAMPLE_TILES)} example tile pairs")
 print("\n\n")
 
-# %% MARK: Vector Fields
+#endregion
+
+#region Vector Fields
 
 farray: TypeAlias = npt.NDArray[np.float32]
 
@@ -769,7 +776,9 @@ for field_type in VECTOR_FIELDS.keys():
     print(f"  - {field_type}")
 print("\n")
 
-# %% MARK: Flow Visualizations
+#endregion
+
+#region Flow Visualizations
 
 
 def flow_to_color(flow_uv: farray):
@@ -951,8 +960,9 @@ def _visualise_all_vector_fields(save=True):
     for vector_field in VECTOR_FIELDS.keys():
         _visualise_vector_field(vector_field, save=save)
 
+#endregion
 
-# %% MARK: Shape Masks
+#region Shape Masks
 # All shape masks should return values from 0-1
 
 
@@ -1314,8 +1324,9 @@ for shape_function in shape_functions:
     print(f"  - {shape_function.__name__}")
 print("\n")
 
-# %% MARK: Shape Visualizations
+#endregion
 
+#region Shape Visualizations
 
 def _visualise_shape(shape_function, save=True):
     fig = plt.figure(figsize=(12, 6))
@@ -1370,9 +1381,9 @@ def _visualise_all_shapes(save=True):
         print(shape_function.__name__)
         _visualise_shape(shape_function, save=save)
 
+#endregion
 
-# %% MARK: Dataset
-
+#region Dataset
 
 class SyntheticDataset(IterableDataset[Tuple[farray, farray, farray]]):
     VERSION = "v5-raft"
@@ -1506,9 +1517,9 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray, farray]]):
 
         return image, warped_image, final_field
 
+#endregion
 
-# %% MARK: Dataset Visualizations
-
+#region Dataset Visualizations
 
 def _visualise_dataset(save=True):
     dataset = SyntheticDataset()
@@ -1531,9 +1542,9 @@ def _visualise_dataset(save=True):
         os.makedirs(f"testing_visuals/dataset", exist_ok=True)
         plt.savefig(f"testing_visuals/dataset/dataset.png")
 
+#endregion
 
-# %% MARK: Model
-
+#region Model
 
 class LayerNorm(nn.Module):
     r"""LayerNorm that supports two data formats: channels_last (default) or channels_first.
@@ -2086,8 +2097,10 @@ class RAFT(nn.Module):
                 "nf": None,
             }
 
+#endregion
 
-# %% MARK: Create Dataloader
+#region Create Dataloader
+
 training_dataset = SyntheticDataset()
 validation_dataset = SyntheticDataset(validation=True)
 
@@ -2103,7 +2116,9 @@ validation_dataloader = DataLoader(
 
 print(f" === Created DataLoaders ({SyntheticDataset.VERSION}) ===\n\n")
 
-# %% MARK: Create Model
+#endregion
+
+#region Create Model
 
 model = RAFT().to(device)
 if os.path.exists(SNAPSHOT_FILE):
@@ -2120,7 +2135,9 @@ print(f" === Created Model ({RAFT.__name__}) ===")
 print(model)
 print("\n\n")
 
-# %% MARK: Loss Function
+#endregion
+
+#region Loss Function
 LOSS_FUNCTION = "Mixture-of-Laplace"
 
 # {
@@ -2162,9 +2179,9 @@ def loss_function(
 
     return flow_loss, metrics
 
+#endregion
 
-# %% MARK: Visualize Model
-
+#region Visualize Model
 
 def _visualise_model(
     idx: int = 0, seed: int = 0, examples=1, didx=1, dseed=1, save=True
@@ -2216,8 +2233,9 @@ def _visualise_model(
 
     return return_figs
 
+#endregion
 
-# %% MARK: Optimizer
+#region Optimizer
 
 OPTIMIZER_OPTIONS = {
     "type": "AdamW",
@@ -2251,7 +2269,9 @@ scheduler = optim.lr_scheduler.OneCycleLR(
     cycle_momentum=SCHEDULER_OPTIONS["cycle_momentum"],
 )
 
-# %% MARK: Weights and Biases Setup
+#endregion
+
+#region Weights and Biases Setup
 import wandb
 
 wandb_config = {
@@ -2306,7 +2326,9 @@ if WANDB_ENABLED:
 else:
     print("WANDB disabled")
 
-# %% MARK: Training Loop
+#endregion
+
+#region Training Loop
 
 batch = starting_batch
 
@@ -2472,4 +2494,4 @@ for idx, (batch_image1, batch_image2, batch_vectors) in enumerate(training_datal
 
 print("Done!")
 
-# %%
+#endregion
