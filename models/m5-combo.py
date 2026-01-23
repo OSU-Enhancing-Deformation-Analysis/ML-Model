@@ -1,6 +1,4 @@
-# %% [markdown]
-#
-# Important things to know about this notebook:
+# Important things to know about this:
 #
 # - It contains code to tile images
 # - There are additional config options for validation and tiling
@@ -15,12 +13,12 @@
 # - All shapes have been drastically sped up
 # - Contains code to visualize shapes
 # - New synthetic dataset using and IterableDataset
-# - 75% have shapes masks, of those 50% are inverted, 50% are blured
+# - 75% have shapes masks, of those 50% are inverted, 50% are blurred
 # - 50% have inverted inside, 50% have newfield inside
 # - Uses AdamW for the optimizer
 #
 
-# %% MARK: Imports
+#region Imports
 import os
 import glob
 import re
@@ -58,7 +56,9 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 import torch.nn.functional as F
 
-# %% MARK: Constants
+#endregion Constants
+
+#region Cuda and Constants
 
 # Load the CUDA GPU if available
 device = (
@@ -94,8 +94,6 @@ WANDB_ENABLED = True
 # Model name for saving files and in wandb
 RUN_NAME = "b5-unknown-combo-test"
 
-# %% MARK: Tile Loading
-
 # Relative path to the folder of images
 # This folder is recursively searched so make sure it
 # doesn't contain a symbolic link to itself
@@ -128,7 +126,9 @@ INCLUDE_OUTSIDE = False
 # and no motion will be expected for these regions
 ZERO_MOTION_THRESHOLD = 0
 
-# %% MARK: Load CLI Options
+#endregion
+
+#region Load CLI Options
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -281,7 +281,10 @@ BATCH_SIZE = int(BATCH_SIZE * args.batch_size_multiplier)
 
 SNAPSHOT_FILE = f"{RUN_NAME}.pth"
 
-# %% MARK: Load Tiles
+#endregion
+
+#region Tile Loading
+
 print(" === Image Loading ===\n")
 print(f"- Loading images from {IMAGES_DIR}")
 IMAGE_PATHS = glob.glob(
@@ -518,7 +521,9 @@ EXAMPLE_TILES: List[Tuple[str, Tensor]] = [
 print(f"- Found {len(EXAMPLE_TILES)} example tile pairs")
 print("\n\n")
 
-# %% MARK: Vector Fields
+#endregion
+
+#region Vector Fields
 
 farray: TypeAlias = npt.NDArray[np.float32]
 
@@ -767,7 +772,9 @@ for field_type in VECTOR_FIELDS.keys():
     print(f"  - {field_type}")
 print("\n")
 
-# %% MARK: Flow Visualizations
+#endregion
+
+#region Flow Visualizations
 
 
 def flow_to_color(flow_uv: farray):
@@ -949,11 +956,11 @@ def _visualise_all_vector_fields(save=True):
     for vector_field in VECTOR_FIELDS.keys():
         _visualise_vector_field(vector_field, save=save)
 
+#endregion
 
-# %% MARK: Shape Masks
+#region Shape Masks
+
 # All shape masks should return values from 0-1
-
-
 def create_square_shape(size: int) -> farray:
     """Creates a square shape: centered -> rotated -> translated."""
 
@@ -1312,9 +1319,9 @@ for shape_function in shape_functions:
     print(f"  - {shape_function.__name__}")
 print("\n")
 
-# %% MARK: Shape Visualizations
+#endregion
 
-
+#region Shape Visualizations
 def _visualise_shape(shape_function, save=True):
     fig = plt.figure(figsize=(12, 6))
     gs = gridspec.GridSpec(3, 7, figure=fig, wspace=0.4, hspace=0.4)
@@ -1368,9 +1375,9 @@ def _visualise_all_shapes(save=True):
         print(shape_function.__name__)
         _visualise_shape(shape_function, save=save)
 
+#endregion
 
-# %% MARK: Dataset
-
+#region Dataset
 
 class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
     VERSION = "v5"
@@ -1502,9 +1509,9 @@ class SyntheticDataset(IterableDataset[Tuple[farray, farray]]):
 
         return np.array([image, warped_image]).astype(np.float32), final_field
 
+#endregion
 
-# %% MARK: Dataset Visualizations
-
+#region Dataset Visualizations
 
 def _visualise_dataset(save=True):
     dataset = SyntheticDataset()
@@ -1527,9 +1534,9 @@ def _visualise_dataset(save=True):
         os.makedirs(f"testing_visuals/dataset", exist_ok=True)
         plt.savefig(f"testing_visuals/dataset/dataset.png")
 
+#endregion
 
-# %% MARK: Model
-
+#region Model
 
 class ConvolutionBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
@@ -1706,8 +1713,10 @@ class ComboMotionVectorConvolutionNetwork(nn.Module):
         output = self.output_conv(conv_up4)
         return output
 
+#endregion
 
-# %% MARK: Create Dataloader
+#region Create Dataloader
+
 training_dataset = SyntheticDataset()
 validation_dataset = SyntheticDataset(validation=True)
 
@@ -1723,7 +1732,9 @@ validation_dataloader = DataLoader(
 
 print(f" === Created DataLoaders ({SyntheticDataset.VERSION}) ===\n\n")
 
-# %% MARK: Create Model
+#endregion
+
+#region Create Model
 
 model = ComboMotionVectorConvolutionNetwork().to(device)
 if os.path.exists(SNAPSHOT_FILE):
@@ -1733,7 +1744,9 @@ print(f" === Created Model ({ComboMotionVectorConvolutionNetwork.__name__}) ==="
 print(model)
 print("\n\n")
 
-# %% MARK: Loss Function
+#endregion
+
+#region Loss Function
 LOSS_FUNCTION = "EPE"
 
 
@@ -1755,8 +1768,9 @@ def loss_function(flow_preds: Tensor, flow_gt: Tensor):
 
     return flow_loss, metrics
 
+#endregion
 
-# %% MARK: Visualize Model
+#region Visualize Model
 
 
 def _visualise_model(
@@ -1808,8 +1822,9 @@ def _visualise_model(
 
     return return_figs
 
+#endregion
 
-# %% MARK: Optimizer
+#region Optimizer
 
 OPTIMIZER_OPTIONS = {
     "type": "AdamW",
@@ -1832,7 +1847,10 @@ scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     patience=SCHEDULER_OPTIONS["patience"],
 )
 
-# %% MARK: Weights and Biases Setup
+#endregion
+
+#region Weights and Biases Setup
+
 import wandb
 
 wandb_config = {
@@ -1882,7 +1900,9 @@ if WANDB_ENABLED:
 else:
     print("WANDB disabled")
 
-# %% MARK: Training Loop
+#endregion
+
+#region Training Loop
 
 batch = starting_batch
 
@@ -2039,4 +2059,4 @@ for idx, (batch_images, batch_vectors) in enumerate(training_dataloader):
 
 print("Done!")
 
-# %%
+#endregion
